@@ -485,16 +485,17 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
     return (out, title);
   }
 
-  /// 递归解析分享：返回分享内**全部**音频文件（含子目录），供全网搜书用。
+  /// 递归解析分享，并**按顶层分组成「书」**：顶层每个目录算一本，
+  /// 顶层散落的音频合并成一组。
   ///
-  /// 有声书分享常见「书名/卷/文件」三层结构，因此深度保留 4；性能靠
-  /// 目录数上限、音频数上限和 4 并发控制，而不是砍深度（砍了会解析出 0 集）。
-  Future<ShareParseResult> parseShareLinkRecursive(
+  /// 合集类分享（一个链接塞几十本书）因此不会被混成一本，也便于只转存
+  /// 用户真正想要的那一本。深度保留 4，性能靠目录/音频上限与并发控制。
+  Future<(List<ShareGroup>, String?)> parseShareGroups(
     String shareUrl, {
     String? pwd,
     int maxDepth = 4,
-    int maxDirs = 80,
-    int maxAudio = 1200,
+    int maxDirsPerGroup = 60,
+    int maxAudioPerGroup = 1200,
     int concurrency = 4,
   }) async {
     final pwdId = extractPwdId(shareUrl);
@@ -502,62 +503,77 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
       throw Exception('无法从链接中提取分享码');
     }
     final stoken = await _getShareToken(pwdId, pwd);
+    final (rootEntries, shareTitle) = await _listShareDir(pwdId, stoken, '0');
 
-    final items = <DriveItem>[];
-    String? shareTitle;
-    String? firstDirName;
-    var dirCount = 0;
+    // 分组：目录各成一组；顶层散落的音频文件合并成一组
+    final groups = <ShareGroup>[];
+    final loose = <Map<String, dynamic>>[];
+    for (final e in rootEntries) {
+      final name = e['file_name']?.toString() ?? '';
+      if (name.isEmpty) continue;
+      if (e['dir'] == true) {
+        groups.add(ShareGroup(title: name, entries: [e]));
+      } else if (DriveItem.isAudioFile(name)) {
+        loose.add(e);
+      }
+    }
+    if (loose.isNotEmpty) {
+      groups.add(ShareGroup(title: shareTitle ?? '分享资源', entries: loose));
+    }
+    if (groups.isEmpty) throw Exception('分享内没有可播放的音频');
 
-    Future<void> collect(
-      List<Map<String, dynamic>> entries,
-      String parentPath,
-      int depth,
-      List<(String, String, int)> queue,
-    ) async {
-      for (final e in entries) {
-        // 音频数到顶就整体停下（文件和目录一起截断）
-        if (items.length >= maxAudio) return;
+    final audios = List.generate(groups.length, (_) => <DriveItem>[]);
+    final dirCounts = List.filled(groups.length, 0);
+    // 待遍历队列：(组号, 目录 fid, 相对路径, 深度)
+    final pending = <(int, String, String, int)>[];
+    for (var gi = 0; gi < groups.length; gi++) {
+      for (final e in groups[gi].entries) {
         final name = e['file_name']?.toString() ?? '';
-        if (name.isEmpty) continue;
-        final childPath = parentPath.isEmpty ? name : '$parentPath/$name';
         if (e['dir'] == true) {
-          if (depth >= maxDepth || dirCount >= maxDirs) continue;
           final fid = e['fid']?.toString() ?? '';
-          // fid 缺失时不能拿 '0' 顶上，否则会把根目录重复列一遍
           if (fid.isEmpty) continue;
-          dirCount++;
-          queue.add((fid, childPath, depth + 1));
+          dirCounts[gi]++;
+          pending.add((gi, fid, name, 2));
         } else {
-          items.add(_fromQuarkShareFile(e, path: childPath));
+          audios[gi].add(_fromQuarkShareFile(e, path: name));
         }
       }
     }
 
-    final (rootEntries, rootTitle) = await _listShareDir(pwdId, stoken, '0');
-    shareTitle = rootTitle;
-    for (final e in rootEntries) {
-      if (e['dir'] == true) {
-        firstDirName ??= e['file_name']?.toString();
-      }
-    }
-    final queue = <(String, String, int)>[];
-    await collect(rootEntries, '', 1, queue);
-
+    // 所有组共用一组 worker：目录多的分享也不用一个个排队等
     Future<void> worker() async {
-      while (queue.isNotEmpty) {
-        if (items.length >= maxAudio) return;
-        final (fid, path, depth) = queue.removeLast();
+      while (pending.isNotEmpty) {
+        final (gi, fid, path, depth) = pending.removeLast();
+        if (audios[gi].length >= maxAudioPerGroup) continue;
+        if (dirCounts[gi] > maxDirsPerGroup) continue;
         final (entries, _) = await _listShareDir(pwdId, stoken, fid);
-        await collect(entries, path, depth, queue);
+        for (final e in entries) {
+          if (audios[gi].length >= maxAudioPerGroup) break;
+          final name = e['file_name']?.toString() ?? '';
+          if (name.isEmpty) continue;
+          final childPath = '$path/$name';
+          if (e['dir'] == true) {
+            if (depth >= maxDepth || dirCounts[gi] >= maxDirsPerGroup) continue;
+            final cfid = e['fid']?.toString() ?? '';
+            if (cfid.isEmpty) continue;
+            dirCounts[gi]++;
+            pending.add((gi, cfid, childPath, depth + 1));
+          } else if (DriveItem.isAudioFile(name)) {
+            audios[gi].add(_fromQuarkShareFile(e, path: childPath));
+          }
+        }
       }
     }
 
     await Future.wait(List.generate(concurrency, (_) => worker()));
 
-    return ShareParseResult(
-      items: items,
-      folderName: firstDirName ?? shareTitle ?? '分享资源',
-    );
+    for (var i = 0; i < groups.length; i++) {
+      groups[i].audioItems = audios[i];
+    }
+    // 图片 / 文档类目录解析不出音频，直接丢掉
+    final usable = groups.where((g) => g.audioItems.isNotEmpty).toList();
+    if (usable.isEmpty) throw Exception('分享内没有可直接播放的音频');
+    return (usable, shareTitle);
   }
 
   // ------------------------------------------------------------------
@@ -567,50 +583,70 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
   // 必须先转存到自己的网盘（share/sharepage/save，异步任务）才能播放。
   // ------------------------------------------------------------------
 
-  /// 转存后的音频缓存：pwdId -> 自己网盘里的音频列表。
+  /// 转存后的音频缓存：缓存键 -> 自己网盘里的音频列表。
   final Map<String, List<DriveItem>> _savedShareAudio = {};
 
-  /// 正在进行的转存任务：pwdId -> Future。
+  /// 正在进行的转存任务：缓存键 -> Future。
   /// 同一个分享被连点两次时复用同一个任务，避免转存出两份重复文件。
   final Map<String, Future<List<DriveItem>>> _savingShares = {};
 
   String? _shareInboxFid;
 
-  /// 把整个分享转存到自己的网盘，返回转存后可播放的音频列表
+  /// 把分享转存到自己的网盘，返回转存后可播放的音频列表
   /// （fileId 已是自己网盘的 fid，可直接走 file/download）。
+  ///
+  /// [entries] 只转存指定的顶层条目（即分享里的某一本书）；为空则整个分享。
+  /// [toDirFid] 指定保存目录；为空时用「来自：分享」目录（没有就放根目录）。
   Future<List<DriveItem>> saveShareToMyDrive(
     String shareUrl, {
     String? pwd,
     int maxDepth = 4,
+    List<Map<String, dynamic>>? entries,
+    String? toDirFid,
   }) {
     final pwdId = extractPwdId(shareUrl);
+    final key = _shareKey(pwdId, entries, toDirFid);
     // 空结果也要缓存：否则「转存成功但没找到音频」的分享会被反复转存，
     // 在网盘里堆出重复文件。
-    final cached = _savedShareAudio[pwdId];
+    final cached = _savedShareAudio[key];
     if (cached != null) return Future.value(cached);
-    final inFlight = _savingShares[pwdId];
+    final inFlight = _savingShares[key];
     if (inFlight != null) return inFlight;
 
-    final future = _doSaveShare(pwdId, pwd, maxDepth);
-    _savingShares[pwdId] = future;
+    final future = _doSaveShare(pwdId, pwd, maxDepth, entries, toDirFid);
+    _savingShares[key] = future;
     // 另起一条链挂空 handler：任务失败时不产生未捕获的异步异常，
     // 同时保证无论成败都会把 in-flight 记录清掉。
     future.then<void>((_) {}, onError: (_) {}).whenComplete(
-          () => _savingShares.remove(pwdId),
+          () => _savingShares.remove(key),
         );
     return future;
+  }
+
+  /// 转存缓存键：同一分享的不同书、不同保存目录要分开缓存。
+  String _shareKey(
+    String pwdId,
+    List<Map<String, dynamic>>? entries,
+    String? toDirFid,
+  ) {
+    if (entries == null) return '$pwdId|all|${toDirFid ?? ''}';
+    final fids = entries.map((e) => e['fid']?.toString() ?? '').join('-');
+    return '$pwdId|$fids|${toDirFid ?? ''}';
   }
 
   Future<List<DriveItem>> _doSaveShare(
     String pwdId,
     String? pwd,
     int maxDepth,
+    List<Map<String, dynamic>>? onlyEntries,
+    String? toDirFid,
   ) async {
     if (_cookie == null) throw StateError('Not authenticated');
     if (pwdId.isEmpty) throw Exception('无法从链接中提取分享码');
 
     final stoken = await _getShareToken(pwdId, pwd);
-    final (entries, _) = await _listShareDir(pwdId, stoken, '0');
+    final entries =
+        onlyEntries ?? (await _listShareDir(pwdId, stoken, '0')).$1;
     if (entries.isEmpty) throw Exception('分享内没有文件');
 
     final fidList = <String>[];
@@ -625,7 +661,7 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
     }
     if (fidList.isEmpty) throw Exception('分享内没有可转存的文件');
 
-    final toDir = await _resolveShareInboxFid();
+    final toDir = toDirFid ?? await _resolveShareInboxFid();
     final resp = await _dio.post(
       '$_apiBase/1/clouddrive/share/sharepage/save',
       queryParameters: {'pr': 'ucpro', 'fr': 'pc'},
@@ -687,7 +723,7 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
     for (final b in buckets) {
       out.addAll(b);
     }
-    _savedShareAudio[pwdId] = out;
+    _savedShareAudio[_shareKey(pwdId, onlyEntries, toDirFid)] = out;
     return out;
   }
 
@@ -823,7 +859,7 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
     final pwdId = extractPwdId(shareUrl);
     if (pwdId.isEmpty) throw Exception('无法从链接中提取分享码');
 
-    final audio = _savedShareAudio[pwdId] ??
+    final audio = _savedShareAudio[_shareKey(pwdId, null, null)] ??
         await saveShareToMyDrive(shareUrl);
     if (audio.isEmpty) throw Exception('该分享里没有可直接播放的音频文件');
 
@@ -868,4 +904,27 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
   }
 
   String _nowMs() => (DateTime.now().millisecondsSinceEpoch ~/ 1000).toString();
+}
+
+/// 分享里的「一本书」：顶层的一个目录，或顶层散落的若干音频文件。
+///
+/// 有了分组，合集类分享（一个链接塞几十本书）就能在搜索结果里拆成多本，
+/// 转存时也只提交这一本的顶层 fid，不会把整个合集搬进网盘。
+class ShareGroup {
+  /// 书名：顶层目录名，或分享标题（散落音频那一组）
+  final String title;
+
+  /// 该组的顶层原始条目。转存时只提交这些（取 fid 与 share_fid_token）。
+  final List<Map<String, dynamic>> entries;
+
+  /// 递归收集到的音频（fileId 是分享内的 fid，转存后会被替换）
+  List<DriveItem> audioItems;
+
+  ShareGroup({
+    required this.title,
+    required this.entries,
+    this.audioItems = const [],
+  });
+
+  int get audioBytes => audioItems.fold(0, (s, i) => s + i.size);
 }

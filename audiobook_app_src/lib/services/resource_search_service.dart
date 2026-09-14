@@ -5,7 +5,6 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import '../models/drive_item.dart';
-import 'cloud_drive_service.dart';
 import 'quark_drive_service.dart';
 
 /// 一个待解析的夸克分享。
@@ -29,6 +28,10 @@ class ResourceResult {
   final int keywordHits;
   final String? error;
 
+  /// 这本书在分享里的顶层条目。转存时只提交这些，
+  /// 避免「点一本书却把整个合集搬进网盘」。
+  final List<Map<String, dynamic>>? shareEntries;
+
   ResourceResult({
     required this.title,
     required this.shareUrl,
@@ -37,6 +40,7 @@ class ResourceResult {
     this.passcode,
     this.keywordHits = 0,
     this.error,
+    this.shareEntries,
   });
 
   List<DriveItem> get audioItems => items.where((i) => i.isAudio).toList();
@@ -71,6 +75,9 @@ class ResourceSearchService {
 
   String? _biliCookieCache;
 
+  /// 一个分享里最多展示几本（合集分享可能塞几十本，避免刷屏）
+  static const int _maxGroupsPerShare = 20;
+
   /// 搜索入口。[onProgress] 回传阶段进度；[onResult] 在每解析完一个分享时立即
   /// 回调，用于边解析边出结果（不必等全部解析完）。多个分享并发解析。
   Future<List<ResourceResult>> search(
@@ -104,9 +111,12 @@ class ResourceSearchService {
         final hit = queue.removeAt(0);
         started++;
         onProgress?.call('解析 $started/${targets.length}：${hit.pwdId}');
-        final r = await _parseOne(hit, tokens);
-        results.add(r);
-        onResult?.call(r);
+        // 一个分享可能含多本书 → 拆成多条结果逐条抛出，边解析边显示
+        final list = await _parseMany(hit, tokens);
+        for (final r in list) {
+          results.add(r);
+          onResult?.call(r);
+        }
       }
     }
 
@@ -125,43 +135,73 @@ class ResourceSearchService {
     return results;
   }
 
-  Future<ResourceResult> _parseOne(ResourceHit hit, List<String> tokens) async {
+  /// 解析一个分享，**按书拆分**返回多条结果（合集分享会出多本）。
+  Future<List<ResourceResult>> _parseMany(
+    ResourceHit hit,
+    List<String> tokens,
+  ) async {
     try {
-      var parsed = await _parseWithFallback(hit);
-      final title = parsed.folderName ?? '分享资源';
-      final hits = _score(title, parsed.items, tokens);
-      return ResourceResult(
-        title: title,
-        shareUrl: hit.url,
-        passcode: hit.passcode,
-        source: hit.source,
-        items: parsed.items,
-        keywordHits: hits,
-      );
+      final groups = await _parseGroupsWithFallback(hit);
+      final out = <ResourceResult>[];
+      for (final g in groups) {
+        if (g.audioItems.isEmpty) continue;
+        out.add(ResourceResult(
+          title: g.title,
+          shareUrl: hit.url,
+          passcode: hit.passcode,
+          source: hit.source,
+          items: g.audioItems,
+          keywordHits: _score(g.title, g.audioItems, tokens),
+          shareEntries: g.entries,
+        ));
+      }
+      if (out.isEmpty) {
+        return [
+          ResourceResult(
+            title: '没有音频',
+            shareUrl: hit.url,
+            passcode: hit.passcode,
+            source: hit.source,
+            items: const [],
+            error: '该分享里没有可直接播放的音频',
+          ),
+        ];
+      }
+      // 一个合集塞了几十本时，只留下命中最好的前几本，避免刷屏
+      if (out.length > _maxGroupsPerShare) {
+        out.sort((a, b) {
+          final c = b.keywordHits.compareTo(a.keywordHits);
+          return c != 0 ? c : b.audioItems.length.compareTo(a.audioItems.length);
+        });
+        return out.sublist(0, _maxGroupsPerShare);
+      }
+      return out;
     } catch (e) {
-      return ResourceResult(
-        title: '解析失败',
-        shareUrl: hit.url,
-        passcode: hit.passcode,
-        source: hit.source,
-        items: const [],
-        error: e.toString(),
-      );
+      return [
+        ResourceResult(
+          title: '解析失败',
+          shareUrl: hit.url,
+          passcode: hit.passcode,
+          source: hit.source,
+          items: const [],
+          error: e.toString(),
+        ),
+      ];
     }
   }
 
   /// 提取码是从页面上下文猜的，可能张冠李戴（41007）→ 退回无提取码重试。
-  Future<ShareParseResult> _parseWithFallback(ResourceHit hit) async {
+  Future<List<ShareGroup>> _parseGroupsWithFallback(ResourceHit hit) async {
     try {
-      return await _quark.parseShareLinkRecursive(
-        hit.url,
-        pwd: hit.passcode,
-      );
+      final (groups, _) =
+          await _quark.parseShareGroups(hit.url, pwd: hit.passcode);
+      return groups;
     } catch (e) {
       if (hit.passcode != null &&
           hit.passcode!.isNotEmpty &&
           e.toString().contains('41007')) {
-        return await _quark.parseShareLinkRecursive(hit.url);
+        final (groups, _) = await _quark.parseShareGroups(hit.url);
+        return groups;
       }
       rethrow;
     }

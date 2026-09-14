@@ -19,6 +19,12 @@ class QuarkWebLoginPage extends StatefulWidget {
 class _QuarkWebLoginPageState extends State<QuarkWebLoginPage> {
   static const String _loginUrl = 'https://pan.quark.cn/account/login';
 
+  /// 必须伪装成桌面浏览器：`account/login` 在手机 UA 下会被重定向到
+  /// 「夸克网盘 · 立即下载」推广页，根本看不到登录表单。
+  static const String _desktopUserAgent =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+      '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+
   /// 读取 Cookie 时覆盖的域名：夸克把会话 Cookie 挂在 .quark.cn 上。
   static const List<String> _cookieUrls = [
     'https://pan.quark.cn/',
@@ -67,6 +73,11 @@ class _QuarkWebLoginPageState extends State<QuarkWebLoginPage> {
                 thirdPartyCookiesEnabled: true,
                 useHybridComposition: true,
                 transparentBackground: false,
+                userAgent: _desktopUserAgent,
+                // 桌面版登录页在窄屏上会被整体缩放，保证表单可用
+                useWideViewPort: true,
+                loadWithOverviewMode: true,
+                supportZoom: true,
               ),
               onWebViewCreated: (controller) => _controller = controller,
               onProgressChanged: (controller, progress) {

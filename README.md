@@ -10,10 +10,10 @@
 一个 Flutter 有声书播放器（主用 Android 真机），核心能力是**直接播放网盘里的音频文件夹**，把网盘文件夹当作一本书来管理（目录、进度、续播、历史）。
 
 - 应用名：`audiobook_app`，显示名「聆云」
-- 版本：`1.0.1+2`
+- 版本：`1.0.2+3`
 - 平台目录：`android/`（主力）、`ios/`、`web/`（未验证）
-- **下载安装**：[Releases · 最新版](https://github.com/nxdwjsj/audiobook-app/releases/latest) → 点 `lingyun-v1.0.1.apk` 直接下载安装（release 构建、debug 签名、通用包）
-- 仓库内另有副本：`releases/聆云_v1.0.1.apk`
+- **下载安装**：[Releases · 最新版](https://github.com/nxdwjsj/audiobook-app/releases/latest) → 点 `lingyun-v1.0.2.apk` 直接下载安装（release 构建、debug 签名、通用包）
+- 仓库内另有副本：`releases/聆云_v1.0.2.apk`
 
 **技术栈**
 
@@ -223,10 +223,17 @@ box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `li
 - **历史**：**会话制**——手动点播新建一条记录，自动连播只更新当前记录；
   展示开始时间、听到第几章、已听时长、百分比；单条左滑删除、一键清空；
   点击记录从**记录的章节 + 位置**续播（不是从该章开头）
-- **搜索**：书架内搜索（网盘+本地）；**全网搜书**（书架右上角地球图标）——
+- **搜索**：书架内搜索（网盘+本地）；**全网搜书**（书架右上角「⋮」→ 全网搜书）——
   复用爬虫的 5 路发现渠道（B 站 / yigushi / yangzhiyi / slowread / fangkong）发现夸克分享，
   递归解析出音频数与体积，按关键词打分排序，边解析边出结果（首个结果几秒可见），
-  可一键加入书架或直接播放（`ResourceSearchService` + `QuarkDriveService.parseShareLinkRecursive`）
+  可一键加入书架或直接播放（`ResourceSearchService` + `QuarkDriveService.parseShareGroups`）
+  - **按书拆分**：一个分享 = 一个合集时，顶层每个目录各算一本（`ShareGroup`），
+    结果列表里分别成条，不再把几十本混成一本书（单分享最多列 20 本）
+  - **只转存选中那本**：转存时只提交该书的顶层条目（`entries`），不会把整个合集搬进网盘
+  - **保存位置可选**：搜索页顶部「保存到：xxx」可浏览网盘自选目录，选择被记住，
+    默认用夸克的「来自：分享」
+- **书架布局**：「⋮」→ 书架布局，可选 3 列（默认）/ 2 列 / 4 列 / 列表视图，
+  列表视图为封面在左的横向卡片，选择持久化
 - **分享书播放必须转存**：夸克分享文件**没有直链**（`share/sharepage/download` 返回 404），
   必须用 `share/sharepage/save` 转存到自己网盘（异步任务 + 轮询 `task`，目标目录优先
   「来自：分享」）后，用转存得到的新 fid 走 `file/download` 播放。
@@ -275,6 +282,8 @@ box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `li
 | **代码被误删无法恢复** | 项目此前**没有 git**，删除即永久丢失 → 现已建仓，务必勤提交 |
 | **release 包装上后整个 App 断网**（WebView 白屏、Cookie 校验必失败） | Flutter 只在 `android/app/src/debug/AndroidManifest.xml` 里加了 `INTERNET` 权限，`main/AndroidManifest.xml` **没有** → debug 版正常、release 版无网络权限。**已修**：main 清单显式声明 `INTERNET`，发布前务必核对 |
 | 通知栏不显示播放卡片 | 三个条件缺一不可：main 清单注册 `com.ryanheise.audioservice.AudioService` + `MediaButtonReceiver`、`MainActivity` 继承 `AudioServiceActivity`、Android 13+ 授予 `POST_NOTIFICATIONS` |
+| 夸克登录页显示成「立即下载」推广页 | `pan.quark.cn/account/login` 在手机 UA 下会重定向到下载引导页 → 内置 WebView 必须伪装桌面 UA 并开 `useWideViewPort` |
+| 点一本书却把整个合集转存进网盘 | 分享顶层是多个书目录时要按顶层分组（`ShareGroup`），转存只提交该组的 `entries`，bookId 也要带书名（否则同一分享多本书 id 冲突） |
 
 ---
 

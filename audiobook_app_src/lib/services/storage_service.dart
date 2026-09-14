@@ -106,6 +106,29 @@ class StorageService {
 
   int getSkipOutroSeconds(String bookId) =>
       (config.get('skip_outro_$bookId') as num?)?.toInt() ?? 0;
+
+  // --- 全网搜书 / 书架偏好 ---
+
+  /// 转存分享的目标目录。fid 为空表示用夸克默认的「来自：分享」目录。
+  Future<void> saveQuarkSaveDir(String fid, String name) async {
+    await config.put('quark_save_dir_fid', fid);
+    await config.put('quark_save_dir_name', name);
+  }
+
+  String? getQuarkSaveDirFid() {
+    final v = config.get('quark_save_dir_fid')?.toString();
+    return (v == null || v.isEmpty) ? null : v;
+  }
+
+  String? getQuarkSaveDirName() => config.get('quark_save_dir_name')?.toString();
+
+  /// 书架布局：每行列数。0 表示列表视图。
+  Future<void> saveShelfColumns(int columns) async {
+    await config.put('shelf_columns', columns);
+  }
+
+  int getShelfColumns() =>
+      (config.get('shelf_columns') as num?)?.toInt() ?? 3;
 }
 
 /// A no-op box implementation used when Hive is not available.

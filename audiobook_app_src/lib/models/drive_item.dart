@@ -44,9 +44,10 @@ class DriveItem {
     this.extension,
     this.parentPath = '',
     this.fileCount = 0,
-  }) : isAudio = _isAudioFile(name);
+  }) : isAudio = isAudioFile(name);
 
-  static bool _isAudioFile(String name) {
+  /// 按文件名判断是否为可播放音频（供分享解析等场景直接复用）。
+  static bool isAudioFile(String name) {
     const audioExtensions = [
       'mp3', 'm4a', 'm4b', 'm4r', 'wav', 'flac', 'aac', 'ogg',
       'wma', 'opus', 'aiff', 'aif', 'ape', 'mp4', 'mkv', 'webm',

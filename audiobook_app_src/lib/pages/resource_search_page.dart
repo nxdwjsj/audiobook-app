@@ -7,6 +7,7 @@ import '../repositories/bookshelf_repository.dart';
 import '../services/audio_player_service.dart';
 import '../services/quark_drive_service.dart';
 import '../services/resource_search_service.dart';
+import '../services/storage_service.dart';
 import '../widgets/throttled_navigator.dart';
 
 /// 全网搜书：多渠道发现夸克网盘有声书分享，一键加入书架或直接播放。
@@ -24,10 +25,40 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
   bool _searching = false;
   bool _shelving = false;
 
+  /// 转存目标目录。null = 用夸克的「来自：分享」目录
+  String? _saveDirFid;
+  String _saveDirName = '来自：分享';
+
+  @override
+  void initState() {
+    super.initState();
+    final storage = context.read<StorageService>();
+    _saveDirFid = storage.getQuarkSaveDirFid();
+    _saveDirName = storage.getQuarkSaveDirName() ?? '来自：分享';
+  }
+
   @override
   void dispose() {
     _keyword.dispose();
     super.dispose();
+  }
+
+  /// 选择转存到网盘的哪个目录（记住选择，下次直接用）。
+  Future<void> _pickSaveDir() async {
+    final quark = context.read<QuarkDriveService>();
+    final picked = await showModalBottomSheet<(String, String)>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _SaveDirPicker(quark: quark),
+    );
+    if (picked == null || !mounted) return;
+    final storage = context.read<StorageService>();
+    await storage.saveQuarkSaveDir(picked.$1, picked.$2);
+    if (!mounted) return;
+    setState(() {
+      _saveDirFid = picked.$1.isEmpty ? null : picked.$1;
+      _saveDirName = picked.$2;
+    });
   }
 
   Future<void> _search() async {
@@ -82,6 +113,10 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
     return b.audioItems.length.compareTo(a.audioItems.length);
   }
 
+  /// 书在书架里的 id。同一个分享可能拆出多本书，因此不能只用分享链接。
+  String _bookIdFor(ResourceResult r) =>
+      DriveItem.bookIdFor(DriveType.quark, '${r.shareUrl}|${r.title}');
+
   /// 加入书架（可选立即播放）。返回是否成功。
   ///
   /// 夸克分享文件没有直链，必须先转存到自己的网盘，转存后的 fid 才能播放。
@@ -100,10 +135,16 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
       final player = context.read<AudioPlayerService>();
       final quark = context.read<QuarkDriveService>();
 
-      setState(() => _progress = '正在转存「${r.title}」到你的夸克网盘…');
+      setState(() => _progress = '正在转存「${r.title}」到「$_saveDirName」…');
       List<DriveItem> saved;
       try {
-        saved = await quark.saveShareToMyDrive(r.shareUrl, pwd: r.passcode);
+        // 只转存这一本书（entries = 该书的顶层条目），而不是整个合集
+        saved = await quark.saveShareToMyDrive(
+          r.shareUrl,
+          pwd: r.passcode,
+          entries: r.shareEntries,
+          toDirFid: _saveDirFid,
+        );
       } catch (e) {
         if (mounted) setState(() => _progress = null);
         messenger.showSnackBar(SnackBar(content: Text('转存失败：$e')));
@@ -120,7 +161,7 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
         folderName: r.title,
         audioFiles: saved,
         driveType: DriveType.quark,
-        bookId: DriveItem.bookIdFor(DriveType.quark, r.shareUrl),
+        bookId: _bookIdFor(r),
       );
       await repo.add(BookshelfBook(
         id: book.id,
@@ -185,6 +226,37 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
               ],
             ),
           ),
+          // 转存到网盘的哪个目录（点一下可更换，选择会被记住）
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 0, 18, 4),
+            child: InkWell(
+              onTap: _shelving ? null : _pickSaveDir,
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  children: [
+                    Icon(Icons.drive_file_move_outline,
+                        size: 16, color: Theme.of(context).colorScheme.primary),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '保存到：$_saveDirName',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                    Text(
+                      '更换',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.primary),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
           if (_progress != null)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -213,9 +285,8 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
 
   Widget _buildCard(ResourceResult r) {
     final theme = Theme.of(context);
-    final inShelf = context
-        .read<BookshelfRepository>()
-        .isInShelf(DriveItem.bookIdFor(DriveType.quark, r.shareUrl));
+    final inShelf =
+        context.read<BookshelfRepository>().isInShelf(_bookIdFor(r));
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: ListTile(
@@ -296,5 +367,177 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
       i++;
     }
     return '${v.toStringAsFixed(v >= 100 || i == 0 ? 0 : 1)} ${units[i]}';
+  }
+}
+
+/// 转存目标目录选择器：浏览自己网盘的目录树，选定后返回 (fid, 名称)。
+/// fid 为空字符串表示沿用夸克默认的「来自：分享」目录。
+class _SaveDirPicker extends StatefulWidget {
+  const _SaveDirPicker({required this.quark});
+
+  final QuarkDriveService quark;
+
+  @override
+  State<_SaveDirPicker> createState() => _SaveDirPickerState();
+}
+
+class _SaveDirPickerState extends State<_SaveDirPicker> {
+  /// 当前路径（fid, 名称），空表示根目录
+  final List<(String, String)> _stack = [];
+  List<DriveItem> _dirs = const [];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  String get _pathLabel =>
+      _stack.isEmpty ? '根目录' : _stack.map((e) => e.$2).join(' / ');
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final items = await widget.quark
+          .listFolder(dirFileId: _stack.isEmpty ? null : _stack.last.$1);
+      if (!mounted) return;
+      setState(() {
+        _dirs = items.where((i) => i.isDir).toList();
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = '$e';
+        _loading = false;
+      });
+    }
+  }
+
+  void _enter(DriveItem dir) {
+    _stack.add((dir.fileId, dir.name));
+    _load();
+  }
+
+  void _up() {
+    if (_stack.isEmpty) return;
+    _stack.removeLast();
+    _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final fid = _stack.isEmpty ? '0' : _stack.last.$1;
+    return SafeArea(
+      child: SizedBox(
+        height: MediaQuery.of(context).size.height * 0.72,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child:
+                        Text('选择保存位置', style: theme.textTheme.titleMedium),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  if (_stack.isNotEmpty)
+                    IconButton(
+                      icon: const Icon(Icons.arrow_upward_rounded, size: 18),
+                      tooltip: '上一级',
+                      onPressed: _up,
+                    ),
+                  Expanded(
+                    child: Text(
+                      _pathLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 8),
+            Expanded(child: _buildList(theme)),
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.inbox_rounded, size: 18),
+                      label: const Text('用「来自：分享」（默认）'),
+                      onPressed: () =>
+                          Navigator.pop(context, ('', '来自：分享')),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      icon: const Icon(Icons.check_rounded, size: 18),
+                      label: Text('保存到「$_pathLabel」'),
+                      onPressed: () =>
+                          Navigator.pop(context, (fid, _pathLabel)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildList(ThemeData theme) {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Text(
+            '读取目录失败：$_error',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: theme.colorScheme.error),
+          ),
+        ),
+      );
+    }
+    if (_dirs.isEmpty) {
+      return const Center(child: Text('这个文件夹里没有子文件夹'));
+    }
+    return ListView.builder(
+      itemCount: _dirs.length,
+      itemBuilder: (context, i) {
+        final d = _dirs[i];
+        return ListTile(
+          leading: const Icon(Icons.folder_rounded),
+          title: Text(d.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+          trailing: const Icon(Icons.chevron_right_rounded),
+          onTap: () => _enter(d),
+        );
+      },
+    );
   }
 }
