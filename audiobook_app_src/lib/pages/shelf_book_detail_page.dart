@@ -135,107 +135,127 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
     final chapters = _displayChapters;
     // 头部信息（封面/简介/统计）+ 章节列表放在同一个懒加载列表里，
     // 3384 章也只构建屏幕内可见的行，不卡顿。
-    const headerCount = 3; // header + stats + 目录工具条
-    return ListView.builder(
-      controller: _scrollController,
-      padding: const EdgeInsets.only(bottom: 16),
-      itemCount: headerCount + chapters.length,
-      itemBuilder: (context, index) {
-        if (index == 0) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildHeader(context),
-              if (_book.description != null && _book.description!.isNotEmpty)
-                _buildDescription(context),
-            ],
-          );
-        }
-        if (index == 1) return _buildStatsRow(context, progress);
-        if (index == 2) return _buildChapterToolbar(context, chapters.length);
-        final chapterIndex = _descending
-            ? _chapters.length - 1 - (index - headerCount)
-            : index - headerCount;
-        final chapter = chapters[index - headerCount];
-        final isPlayingChapter =
-            isCurrent && chapterIndex == player.currentChapterIndex;
-        return ListTile(
-          dense: true,
-          leading: isPlayingChapter
-              ? Icon(Icons.graphic_eq_rounded,
-                  color: Theme.of(context).colorScheme.primary)
-              : Text('${chapterIndex + 1}'),
-          title: Text(
-            chapter.title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontWeight:
-                  isPlayingChapter ? FontWeight.bold : FontWeight.normal,
-              color: isPlayingChapter
-                  ? Theme.of(context).colorScheme.primary
+    const headerCount = 3; // header + stats + 目录标题
+    return Stack(
+      children: [
+        ListView.builder(
+          controller: _scrollController,
+          // 底部留出浮动按钮组的空间，避免最后一行被遮挡
+          padding: const EdgeInsets.only(bottom: 80),
+          itemCount: headerCount + chapters.length,
+          itemBuilder: (context, index) {
+            if (index == 0) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildHeader(context),
+                  if (_book.description != null && _book.description!.isNotEmpty)
+                    _buildDescription(context),
+                ],
+              );
+            }
+            if (index == 1) return _buildStatsRow(context, progress);
+            if (index == 2) return _buildChapterTitle(context, chapters.length);
+            final chapterIndex = _descending
+                ? _chapters.length - 1 - (index - headerCount)
+                : index - headerCount;
+            final chapter = chapters[index - headerCount];
+            final isPlayingChapter =
+                isCurrent && chapterIndex == player.currentChapterIndex;
+            return ListTile(
+              dense: true,
+              leading: isPlayingChapter
+                  ? Icon(Icons.graphic_eq_rounded,
+                      color: Theme.of(context).colorScheme.primary)
+                  : Text('${chapterIndex + 1}'),
+              title: Text(
+                chapter.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontWeight:
+                      isPlayingChapter ? FontWeight.bold : FontWeight.normal,
+                  color: isPlayingChapter
+                      ? Theme.of(context).colorScheme.primary
+                      : null,
+                ),
+              ),
+              trailing: isPlayingChapter
+                  ? Text(
+                      '正在播放',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    )
                   : null,
-            ),
-          ),
-          trailing: isPlayingChapter
-              ? Text(
-                  '正在播放',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                )
-              : null,
-          onTap: () => _playChapter(context, chapterIndex),
-        );
-      },
+              onTap: () => _playChapter(context, chapterIndex),
+            );
+          },
+        ),
+        // 浮动目录工具条：回顶部 / 定位正在播放 / 正倒序切换，列表任意位置可用
+        Positioned(
+          right: 16,
+          bottom: 16,
+          child: _buildFloatingChapterToolbar(context, chapters.length),
+        ),
+      ],
     );
   }
 
-  /// 目录工具条：标题 + 回顶部 / 定位正在播放 / 正倒序切换。
-  Widget _buildChapterToolbar(BuildContext context, int chapterCount) {
+  /// 目录标题行（仅标题，按钮在浮动工具条上）。
+  Widget _buildChapterTitle(BuildContext context, int chapterCount) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              chapterCount == 0 ? '暂无章节信息' : '目录（$chapterCount 集）',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      child: Text(
+        chapterCount == 0 ? '暂无章节信息' : '目录（$chapterCount 集）',
+        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.bold,
             ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.vertical_align_top_rounded),
-            tooltip: '回到顶部',
-            onPressed: () => _scrollController.hasClients
-                ? _scrollController.animateTo(
-                    0,
-                    duration: const Duration(milliseconds: 400),
-                    curve: Curves.easeOutCubic,
-                  )
-                : null,
-          ),
-          IconButton(
-            icon: const Icon(Icons.my_location_rounded),
-            tooltip: '定位到正在播放',
-            onPressed: () => _scrollToPlaying(force: true),
-          ),
-          IconButton(
-            icon: Icon(_descending
-                ? Icons.south_rounded
-                : Icons.north_rounded),
-            tooltip: _descending ? '当前：最新在前，点击改为第 1 集在前' : '当前：第 1 集在前，点击改为最新在前',
-            onPressed: () {
-              setState(() => _descending = !_descending);
-              // 切换排序后回到列表起点（顶部或底部对应最新/最旧）
-              if (_scrollController.hasClients) {
-                _scrollController.jumpTo(0);
-              }
-            },
-          ),
-        ],
+      ),
+    );
+  }
+
+  /// 浮动目录工具条：回顶部 / 定位正在播放 / 正倒序切换，悬浮于列表右下角。
+  Widget _buildFloatingChapterToolbar(BuildContext context, int chapterCount) {
+    return Card(
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.vertical_align_top_rounded),
+              tooltip: '回到顶部',
+              onPressed: () => _scrollController.hasClients
+                  ? _scrollController.animateTo(
+                      0,
+                      duration: const Duration(milliseconds: 400),
+                      curve: Curves.easeOutCubic,
+                    )
+                  : null,
+            ),
+            IconButton(
+              icon: const Icon(Icons.my_location_rounded),
+              tooltip: '定位到正在播放',
+              onPressed: () => _scrollToPlaying(force: true),
+            ),
+            IconButton(
+              icon: Icon(_descending
+                  ? Icons.south_rounded
+                  : Icons.north_rounded),
+              tooltip: _descending ? '当前：最新在前，点击改为第 1 集在前' : '当前：第 1 集在前，点击改为最新在前',
+              onPressed: () {
+                setState(() => _descending = !_descending);
+                if (_scrollController.hasClients) {
+                  _scrollController.jumpTo(0);
+                }
+              },
+            ),
+          ],
+        ),
       ),
     );
   }
