@@ -150,10 +150,9 @@ class _SessionTile extends StatelessWidget {
           '第 $chapterNo 章${chapterTitle != null ? ' · $chapterTitle' : ''}\n'
           '${_fmtStart(session.startedAt)}开始 · 已听 ${_fmtDuration(session.positionSeconds)}'
           '${percent != null ? '（$percent%）' : ''}',
-          maxLines: 2,
+          maxLines: 3,
           overflow: TextOverflow.ellipsis,
         ),
-        isThreeLine: true,
         trailing: isCurrent
             ? Text(
                 '正在播放',
