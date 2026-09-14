@@ -86,7 +86,7 @@ class BookmarksPage extends StatelessWidget {
       await Future.delayed(const Duration(milliseconds: 300));
       await player.seek(Duration(seconds: bookmark.positionSeconds));
     } else {
-      // Book must be in bookshelf to resume; online books are no longer supported
+      // 恢复书签要求书籍仍留在书架中；历史遗留的在线书已不再支持
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('书签对应的书籍已不在书架中')),

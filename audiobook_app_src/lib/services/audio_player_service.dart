@@ -37,7 +37,7 @@ class AudioPlayerService extends ChangeNotifier {
   Timer? _progressSaveTimer;
 
   /// 下一章预加载：当前章播到 80% 时预解析下一章直链，切章零等待。
-  /// key = chapter.fileId（网盘/在线源章节均有唯一 id）。
+  /// key = chapter.fileId（网盘章节均有唯一 id）。
   final _resolvedCache = <String, ResolvedStream>{};
   String? _preloadedForFileId; // 已为哪个章节预加载过（防重复触发）
 
@@ -175,7 +175,7 @@ class AudioPlayerService extends ChangeNotifier {
         return;
       }
     } else {
-      // 无法解析的章节（本地文件且非 local_ 前缀、或已从书架移除的在线书）
+      // 无法解析的章节（既无网盘 fileId，也无本地文件路径）
       lastError = '该书章节无法播放（来源不支持或数据不完整）';
       debugPrint('[Player] $lastError');
       notifyListeners();

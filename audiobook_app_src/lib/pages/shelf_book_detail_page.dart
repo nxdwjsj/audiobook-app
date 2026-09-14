@@ -15,7 +15,7 @@ import 'drive_browser_page.dart';
 import 'edit_book_info_page.dart';
 
 /// 书架书籍详情页：封面 + 信息 + 完整目录 + 正在播放章节高亮。
-/// 网盘书/本地书/在线书统一入口，目录不再需要去网盘翻文件夹。
+/// 网盘书/本地书统一入口，目录不再需要去网盘翻文件夹。
 class ShelfBookDetailPage extends StatefulWidget {
   final BookshelfBook book;
 
@@ -287,7 +287,7 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
       case DriveType.baidu:
         return '百度网盘';
       default:
-        return '在线书源';
+        return '未知来源';
     }
   }
 

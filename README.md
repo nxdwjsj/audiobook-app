@@ -167,15 +167,11 @@ box：`bookshelf` / `bookmarks` / `playback_progress` / `app_config` / `listen_s
 
 ## 6. 已知问题 / 待办（新会话可从这里挑活）
 
-1. **切章有 800ms 强制延迟**（[audio_player_service.dart](audiobook_app_src/lib/services/audio_player_service.dart) `_loadCurrentChapter` 结尾）：
-   加载后无条件 `await Future.delayed(800ms)` 再校验 duration，抵消了"下一章预加载"的零等待效果。
-   建议改成仅在解析失败时校验，或改为事件驱动。
-2. **残留字段** `streamUrlResolverLegacy`（同文件）已无用途，可删。
-3. **悦听吧（yuetingba.cn）在线书源已被移除**（原 `api_service.dart` / `yuetingba_api_service.dart` / 在线详情页均已删除）。
-   若书架里残留在线书，点播放会提示"该书章节无法播放"，属预期。需要恢复得重新实现整套解析。
-4. **调试脚本 lint**：`tool/debug_quark_ua.dart` 有 `avoid_print` 提示（调试用，可忽略）。
-5. **未被验证的能力**：iOS / Web 平台未测；百度网盘链路在真机上验证较少。
-6. 可选增强：书架分组/排序规则、搜索结果封面补齐、播放失败的错误提示 UI（`lastError` 已具备，可展示）。
+1. **悦听吧（yuetingba.cn）在线书源已移除且不再恢复**：App 只面向网盘（夸克/百度）+ 本地导入。
+   书架里若残留历史在线书（`driveType == null` 且非本地），会显示"未知来源"，点播放提示无法播放属预期，可长按移出书架。
+2. **调试脚本 lint**：`tool/debug_quark_ua.dart` 有 `avoid_print` 提示（调试用，可忽略）。
+3. **未被验证的能力**：iOS / Web 平台未测；百度网盘链路在真机上验证较少。
+4. 可选增强：书架分组/排序规则、搜索结果封面补齐、播放失败的错误提示 UI（`lastError` 已具备，可展示）。
 
 ---
 

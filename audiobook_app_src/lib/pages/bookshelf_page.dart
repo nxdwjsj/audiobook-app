@@ -213,9 +213,9 @@ class _BookshelfItem extends StatelessWidget {
         );
       default:
         return (
-          icon: Icons.book_rounded,
-          label: '网盘',
-          color: Theme.of(context).colorScheme.primary
+          icon: Icons.help_outline_rounded,
+          label: '未知',
+          color: Theme.of(context).colorScheme.outline
         );
     }
   }
