@@ -3,10 +3,10 @@ import 'package:provider/provider.dart';
 
 import 'models/drive_item.dart';
 import 'pages/home_page.dart';
-import 'repositories/bookmark_repository.dart';
 import 'repositories/bookshelf_repository.dart';
 import 'repositories/listen_session_repository.dart';
 import 'repositories/progress_repository.dart';
+import 'repositories/stats_repository.dart';
 import 'services/audio_player_service.dart';
 import 'services/baidu_drive_service.dart';
 import 'services/local_import_service.dart';
@@ -39,14 +39,14 @@ void main() async {
         ChangeNotifierProvider<BookshelfRepository>(
           create: (_) => BookshelfRepository(storage),
         ),
-        Provider<BookmarkRepository>(
-          create: (_) => BookmarkRepository(storage),
-        ),
         ChangeNotifierProvider<ProgressRepository>(
           create: (_) => ProgressRepository(storage),
         ),
         ChangeNotifierProvider<ListenSessionRepository>(
           create: (_) => ListenSessionRepository(storage),
+        ),
+        ChangeNotifierProvider<StatsRepository>(
+          create: (_) => StatsRepository(storage),
         ),
         Provider<LocalImportService>(
           create: (ctx) => LocalImportService(
@@ -62,6 +62,8 @@ void main() async {
             );
             // 历史会话：手动点播新建记录，自动连播只更新
             player.sessionRepo = ctx.read<ListenSessionRepository>();
+            // 收听时长统计：按天 + 按书累计
+            player.statsRepo = ctx.read<StatsRepository>();
             // Set up stream URL resolver for cloud drive chapters.
             player.streamUrlResolver = (chapter) async {
               if (chapter.driveType == null || chapter.fileId == null) {

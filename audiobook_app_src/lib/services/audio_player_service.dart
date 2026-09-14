@@ -7,6 +7,7 @@ import '../models/listen_session.dart';
 import '../models/playback_progress.dart';
 import '../repositories/listen_session_repository.dart';
 import '../repositories/progress_repository.dart';
+import '../repositories/stats_repository.dart';
 import 'cloud_drive_service.dart';
 
 /// Resolves a cloud drive chapter to a streamable URL plus any HTTP headers
@@ -24,6 +25,15 @@ class AudioPlayerService extends ChangeNotifier {
   /// 收听会话（历史记录数据源）：手动点播新建，自动连播只更新。
   ListenSessionRepository? sessionRepo;
   ListenSession? _activeSession;
+
+  /// 收听时长统计（按天 + 按书）。
+  StatsRepository? statsRepo;
+
+  /// 上次统计打点时间；暂停时置空，避免把暂停/后台的间隔算成收听。
+  DateTime? _lastStatsTick;
+
+  /// 尚未满 1 秒记账阈值的零头时长。
+  Duration _pendingListen = Duration.zero;
 
   Book? _currentBook;
   List<Chapter> _chapters = [];
@@ -51,8 +61,15 @@ class AudioPlayerService extends ChangeNotifier {
   AudioPlayerService(this._progressRepo) {
     // Listen to playback events
     _player.playbackEventStream.listen(_onPlaybackEvent);
-    _player.playerStateStream.listen((_) => notifyListeners());
-    _player.positionStream.listen((_) => notifyListeners());
+    _player.playerStateStream.listen((state) {
+      // 暂停时清空打点基准，恢复播放后重新起算
+      if (!state.playing) _lastStatsTick = null;
+      notifyListeners();
+    });
+    _player.positionStream.listen((_) {
+      _tickStats();
+      notifyListeners();
+    });
     _player.durationStream.listen((_) => notifyListeners());
   }
 
@@ -299,7 +316,47 @@ class AudioPlayerService extends ChangeNotifier {
     }
   }
 
+  /// 按墙钟增量累计「真正在播放」的时长。
+  /// positionStream 仅在播放时持续触发，配合暂停时清空基准，可避免把
+  /// 暂停 / 切后台的间隔算成收听时间。
+  void _tickStats() {
+    final now = DateTime.now();
+    final last = _lastStatsTick;
+    _lastStatsTick = now;
+    if (last == null || !_player.playing || statsRepo == null) return;
+    final delta = now.difference(last);
+    // 间隔异常（系统冻结、长时间挂起）直接丢弃
+    if (delta <= Duration.zero || delta > const Duration(seconds: 60)) return;
+    _pendingListen += delta;
+    // 满 10 秒才记一次账，减少 Hive 写入与通知频率
+    if (_pendingListen.inSeconds < 10) return;
+    final seconds = _pendingListen.inSeconds;
+    _pendingListen -= Duration(seconds: seconds);
+    statsRepo!.addSeconds(
+      seconds,
+      bookId: _currentBook?.id,
+      bookTitle: _currentBook?.title,
+    );
+  }
+
+  /// 把零头时长记账并落盘（随进度保存一起触发）。
+  Future<void> _flushStats() async {
+    final repo = statsRepo;
+    if (repo == null) return;
+    final pending = _pendingListen.inSeconds;
+    if (pending > 0) {
+      _pendingListen -= Duration(seconds: pending);
+      repo.addSeconds(
+        pending,
+        bookId: _currentBook?.id,
+        bookTitle: _currentBook?.title,
+      );
+    }
+    await repo.flush();
+  }
+
   Future<void> _saveProgress() async {
+    await _flushStats();
     if (_currentBook == null) return;
     final progress = _player.position;
     await _progressRepo.saveProgress(

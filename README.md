@@ -62,7 +62,7 @@ audiobook_app_src/
 ├─ lib/
 │  ├─ main.dart                 # 入口：初始化存储 → 创建网盘服务 → Provider 注入
 │  ├─ models/                   # 数据模型（Hive 模型 + .g.dart 生成文件）
-│  ├─ repositories/             # 本地数据仓储（书架/进度/历史/书签），均为 ChangeNotifier
+│  ├─ repositories/             # 本地数据仓储（书架/进度/历史/统计），均为 ChangeNotifier
 │  ├─ services/                 # 业务服务（播放器、网盘、本地导入、存储）
 │  ├─ pages/                    # 页面
 │  ├─ widgets/                  # 通用组件（迷你播放栏、导航节流等）
@@ -84,7 +84,8 @@ audiobook_app_src/
 | [storage_service.dart](audiobook_app_src/lib/services/storage_service.dart) | Hive 初始化、box 与 adapter 注册 |
 | [shelf_book_detail_page.dart](audiobook_app_src/lib/pages/shelf_book_detail_page.dart) | 书籍详情页：封面/信息/完整目录/目录工具条 |
 | [player_page.dart](audiobook_app_src/lib/pages/player_page.dart) | 播放页（全局唯一，见 `pushPlayerPage`） |
-| [home_page.dart](audiobook_app_src/lib/pages/home_page.dart) | 底部三 tab（书架/历史/书签）+ 手势返回联动 |
+| [home_page.dart](audiobook_app_src/lib/pages/home_page.dart) | 底部三 tab（书架/历史/统计）+ 手势返回联动 |
+| [stats_page.dart](audiobook_app_src/lib/pages/stats_page.dart) | 收听统计：月度方格热力图 + 总时长 + 单本时长 |
 | [throttled_navigator.dart](audiobook_app_src/lib/widgets/throttled_navigator.dart) | 跳转节流（600ms）+ 播放页单例守卫 |
 
 ---
@@ -128,16 +129,18 @@ _player.setUrl(url, headers: resolved.headers)
 
 ### 4.3 本地存储（Hive）
 
-box：`bookshelf` / `bookmarks` / `playback_progress` / `app_config` / `listen_sessions`
+box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `listening_stats`
 
 已用 `typeId`（**新增模型请用未占用的号，并重新跑 build_runner**）：
 
 | 模型 | typeId |
 |---|---|
-| `Bookmark` | 0 |
 | `PlaybackProgress` | 1 |
 | `BookshelfBook` | 2 |
 | `ListenSession` | 3 |
+
+> `typeId 0`（原 `Bookmark`）随书签功能移除已空出，可复用。
+> `listening_stats` 存纯 Map（按天/按书时长），不需要 typeId 与 build_runner。
 
 `app_config` 存网盘登录态：夸克 Cookie（`saveQuarkCookie`）、百度 AppKey/access_token。
 
@@ -159,7 +162,11 @@ box：`bookshelf` / `bookmarks` / `playback_progress` / `app_config` / `listen_s
   下一章预加载（播到 80% 预解析）、迷你播放栏、播放页全局唯一
 - **历史**：**会话制**——手动点播新建一条记录，自动连播只更新当前记录；
   展示开始时间、听到第几章、已听时长、百分比；单条左滑删除、一键清空
-- **书签**、**搜索**（搜网盘 + 本地书架，入口在书架右上角）
+- **书签已移除**；**搜索**保留（搜网盘 + 本地书架，入口在书架右上角）
+- **收听统计**（替代书签 tab）：月度方格热力图，每格一天、颜色越深当天听得越久、空白=没听；
+  可翻月查看；另有累计总时长 / 有记录天数 / 单本时长排行（带占比条）
+- **封面文件生命周期**：编辑信息选图 → 复制到 App 私有目录 `app_flutter/covers/`；
+  更换封面时删旧图，**移出书架时同步删除封面文件**，不留孤儿文件
 - **交互**：全 App 跳转节流 600ms（防连点叠页面）、手势返回联动（非书架 tab 返回先回书架）、
   网盘目录逐级返回
 
@@ -192,6 +199,7 @@ box：`bookshelf` / `bookmarks` / `playback_progress` / `app_config` / `listen_s
 | 日志里出现完整登录 Cookie | 调试日志打印了 headers，**禁止**；只打"方法 URL → 状态码" |
 | 连点跳多个页面 | 未走 `pushThrottled` / `pushPlayerPage` |
 | `flutter run` 频繁掉线 | MIUI 切后台导致连接断开，改用 `adb install -r` + `logcat` |
+| 选封面后没反应、封面存不下来 | 网盘书 `bookId` 含路径（`drive_quark_a/b`），直接拼文件名会因中间目录不存在导致 `copy()` 抛异常，且异步异常被静默吞掉 → 文件名前必须清洗 `\/:*?"<>|` |
 | **代码被误删无法恢复** | 项目此前**没有 git**，删除即永久丢失 → 现已建仓，务必勤提交 |
 
 ---

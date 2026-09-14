@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../widgets/mini_player.dart';
 import 'bookshelf_page.dart';
-import 'bookmarks_page.dart';
 import 'history_page.dart';
+import 'stats_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -18,7 +18,7 @@ class _HomePageState extends State<HomePage> {
   static const List<Widget> _pages = [
     BookshelfPage(),
     HistoryPage(),
-    BookmarksPage(),
+    StatsPage(),
   ];
 
   /// 手势/返回键联动：在非书架 tab 按返回，先切回书架；
@@ -67,9 +67,9 @@ class _HomePageState extends State<HomePage> {
                   label: '历史',
                 ),
                 NavigationDestination(
-                  icon: Icon(Icons.bookmark_border_rounded),
-                  selectedIcon: Icon(Icons.bookmark_rounded),
-                  label: '书签',
+                  icon: Icon(Icons.insights_outlined),
+                  selectedIcon: Icon(Icons.insights_rounded),
+                  label: '统计',
                 ),
               ],
             ),

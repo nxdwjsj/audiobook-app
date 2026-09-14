@@ -1,6 +1,5 @@
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import '../models/bookmark.dart';
 import '../models/bookshelf_book.dart';
 import '../models/listen_session.dart';
 import '../models/playback_progress.dart';
@@ -8,10 +7,10 @@ import '../models/playback_progress.dart';
 /// Manages Hive box initialization and provides access to local storage.
 class StorageService {
   static const String bookshelfBox = 'bookshelf';
-  static const String bookmarksBox = 'bookmarks';
   static const String progressBox = 'playback_progress';
   static const String configBox = 'app_config';
   static const String listenSessionsBox = 'listen_sessions';
+  static const String listeningStatsBox = 'listening_stats';
 
   static bool _hiveReady = false;
 
@@ -20,17 +19,21 @@ class StorageService {
     await Hive.initFlutter();
     debugPrint('StorageService: Hive.initFlutter done');
 
-    Hive.registerAdapter(BookmarkAdapter());
+    // 书签功能已移除，清掉遗留的 box 文件，避免垃圾数据常驻
+    try {
+      await Hive.deleteBoxFromDisk('bookmarks');
+    } catch (_) {}
+
     Hive.registerAdapter(PlaybackProgressAdapter());
     Hive.registerAdapter(BookshelfBookAdapter());
     Hive.registerAdapter(ListenSessionAdapter());
     debugPrint('StorageService: adapters registered');
 
     await Hive.openBox(bookshelfBox);
-    await Hive.openBox(bookmarksBox);
     await Hive.openBox(progressBox);
     await Hive.openBox(configBox);
     await Hive.openBox(listenSessionsBox);
+    await Hive.openBox(listeningStatsBox);
     debugPrint('StorageService: all boxes opened');
     _hiveReady = true;
   }
@@ -39,14 +42,14 @@ class StorageService {
 
   Box<dynamic> get bookshelf =>
       _hiveReady ? Hive.box(bookshelfBox) : _EmptyBox();
-  Box<dynamic> get bookmarks =>
-      _hiveReady ? Hive.box(bookmarksBox) : _EmptyBox();
   Box<dynamic> get progress =>
       _hiveReady ? Hive.box(progressBox) : _EmptyBox();
   Box<dynamic> get config =>
       _hiveReady ? Hive.box(configBox) : _EmptyBox();
   Box<dynamic> get listenSessions =>
       _hiveReady ? Hive.box(listenSessionsBox) : _EmptyBox();
+  Box<dynamic> get listeningStats =>
+      _hiveReady ? Hive.box(listeningStatsBox) : _EmptyBox();
 
   // --- Cloud drive credentials ---
 

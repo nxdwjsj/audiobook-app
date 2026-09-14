@@ -3,9 +3,7 @@ import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../models/bookmark.dart';
 import '../services/audio_player_service.dart';
-import '../repositories/bookmark_repository.dart';
 
 class PlayerPage extends StatelessWidget {
   const PlayerPage({super.key});
@@ -24,11 +22,6 @@ class PlayerPage extends StatelessWidget {
         appBar: AppBar(
           title: const Text('正在播放'),
           actions: [
-            IconButton(
-              icon: const Icon(Icons.bookmark_add_rounded),
-              tooltip: '添加书签',
-              onPressed: player.hasBook ? () => _addBookmark(context) : null,
-            ),
             IconButton(
               icon: const Icon(Icons.list_rounded),
               tooltip: '章节列表',
@@ -438,25 +431,6 @@ class PlayerPage extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  Future<void> _addBookmark(BuildContext context) async {
-    final player = context.read<AudioPlayerService>();
-    final bookmarkRepo = context.read<BookmarkRepository>();
-    final scaffoldMessenger = ScaffoldMessenger.of(context);
-    final bookmark = Bookmark(
-      bookId: player.currentBook!.id,
-      bookTitle: player.currentBook!.title,
-      chapterIndex: player.currentChapterIndex,
-      chapterTitle: player.currentChapter?.title ?? '',
-      positionSeconds: player.position.inSeconds,
-    );
-    await bookmarkRepo.add(bookmark);
-    if (context.mounted) {
-      scaffoldMessenger.showSnackBar(
-        const SnackBar(content: Text('书签已添加')),
-      );
-    }
   }
 
   String _formatDuration(Duration duration) {
