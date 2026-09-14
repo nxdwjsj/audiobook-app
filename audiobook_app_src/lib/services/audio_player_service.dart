@@ -45,10 +45,6 @@ class AudioPlayerService extends ChangeNotifier {
   /// Set by the app during initialization to connect drive services.
   StreamUrlResolverWithHeaders? streamUrlResolver;
 
-  /// Legacy resolver for backward compatibility (will be removed).
-  // ignore: unused_field
-  StreamUrlResolverWithHeaders? streamUrlResolverLegacy;
-
   /// Error message from the last failed load, for UI display.
   String? lastError;
 
@@ -131,6 +127,8 @@ class AudioPlayerService extends ChangeNotifier {
             // 网盘章节: fileId 由网盘服务分配，driveType 对应提供商
             RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
                 .hasMatch(chapter.fileId!));
+    // setUrl 内部已等待平台侧加载完成，返回值即为音频时长，无需再人为延迟校验
+    Duration? loadedDuration;
     if (needsResolver) {
       // Cloud drive chapter: fetch real-time stream URL with headers.
       try {
@@ -158,7 +156,8 @@ class AudioPlayerService extends ChangeNotifier {
           return;
         }
         debugPrint('[Player] 解析到流地址: ${resolved.url.substring(0, resolved.url.length.clamp(0, 120))}...');
-        await _player.setUrl(resolved.url, headers: resolved.headers);
+        loadedDuration =
+            await _player.setUrl(resolved.url, headers: resolved.headers);
       } catch (e) {
         lastError = '获取播放链接失败: $e';
         debugPrint('[Player] $lastError');
@@ -168,11 +167,12 @@ class AudioPlayerService extends ChangeNotifier {
     } else if (_currentBook!.id.startsWith('local_')) {
       // Local imported books store the file path in chapter.filename
       try {
-        await _player.setUrl(chapter.filename);
+        loadedDuration = await _player.setUrl(chapter.filename);
       } catch (e) {
         lastError = '加载音频失败: $e';
         debugPrint('[Player] $lastError');
         notifyListeners();
+        return;
       }
     } else {
       // 无法解析的章节（本地文件且非 local_ 前缀、或已从书架移除的在线书）
@@ -182,18 +182,12 @@ class AudioPlayerService extends ChangeNotifier {
       return;
     }
 
-    // Verify the player actually got a playable stream (has duration).
-    if (lastError == null) {
-      await Future.delayed(const Duration(milliseconds: 800));
-      final dur = _player.duration;
-      debugPrint('[Player] 加载完成: duration=${dur?.inSeconds}s '
-          'processingState=${_player.processingState}');
-      if (dur == null || dur.inMilliseconds <= 0) {
-        if (_player.processingState == ProcessingState.idle) {
-          lastError = '播放器未能加载音频（可能是格式不支持或链接失效）';
-          debugPrint('[Player] $lastError');
-        }
-      }
+    debugPrint('[Player] 加载完成: duration=${loadedDuration?.inSeconds}s '
+        'processingState=${_player.processingState}');
+    if ((loadedDuration == null || loadedDuration.inMilliseconds <= 0) &&
+        _player.processingState == ProcessingState.idle) {
+      lastError = '播放器未能加载音频（可能是格式不支持或链接失效）';
+      debugPrint('[Player] $lastError');
     }
     notifyListeners();
   }
@@ -334,8 +328,7 @@ class AudioPlayerService extends ChangeNotifier {
     final saved = _progressRepo.getProgress(book.id);
     if (saved != null) {
       await playBook(book, startChapter: saved.chapterIndex);
-      // Seek to saved position after loading
-      await Future.delayed(const Duration(milliseconds: 500));
+      // playBook 返回时章节已加载完成，可直接定位续播位置
       if (saved.positionSeconds > 0) {
         await seek(Duration(seconds: saved.positionSeconds));
       }
