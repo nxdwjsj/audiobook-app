@@ -88,6 +88,24 @@ class StorageService {
     final v = config.get('quark_cookie');
     return v?.toString();
   }
+
+  // --- 播放设置 ---
+
+  /// 跳过片头秒数（0 = 不跳过）。
+  Future<void> saveSkipIntroSeconds(int seconds) async {
+    await config.put('skip_intro_seconds', seconds);
+  }
+
+  int getSkipIntroSeconds() =>
+      (config.get('skip_intro_seconds') as num?)?.toInt() ?? 0;
+
+  /// 跳过片尾秒数（0 = 不跳过）。
+  Future<void> saveSkipOutroSeconds(int seconds) async {
+    await config.put('skip_outro_seconds', seconds);
+  }
+
+  int getSkipOutroSeconds() =>
+      (config.get('skip_outro_seconds') as num?)?.toInt() ?? 0;
 }
 
 /// A no-op box implementation used when Hive is not available.

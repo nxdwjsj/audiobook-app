@@ -9,6 +9,7 @@ import '../repositories/listen_session_repository.dart';
 import '../repositories/progress_repository.dart';
 import '../repositories/stats_repository.dart';
 import 'cloud_drive_service.dart';
+import 'storage_service.dart';
 
 /// Resolves a cloud drive chapter to a streamable URL plus any HTTP headers
 /// required to fetch it (e.g. Baidu/Quark reject requests without a browser
@@ -28,6 +29,18 @@ class AudioPlayerService extends ChangeNotifier {
 
   /// 收听时长统计（按天 + 按书）。
   StatsRepository? statsRepo;
+
+  /// 播放设置来源（跳过片头/片尾秒数）。
+  StorageService? storage;
+
+  /// 已触发过片尾跳过的章节下标，保证每章只跳一次。
+  int? _outroSkippedChapterIndex;
+
+  /// 跳过片头秒数（0 = 不跳过）。直接查配置，避免缓存与设置不同步。
+  int get _skipIntroSeconds => storage?.getSkipIntroSeconds() ?? 0;
+
+  /// 跳过片尾秒数（0 = 不跳过）。
+  int get _skipOutroSeconds => storage?.getSkipOutroSeconds() ?? 0;
 
   /// 上次统计打点时间；暂停时置空，避免把暂停/后台的间隔算成收听。
   DateTime? _lastStatsTick;
@@ -66,8 +79,9 @@ class AudioPlayerService extends ChangeNotifier {
       if (!state.playing) _lastStatsTick = null;
       notifyListeners();
     });
-    _player.positionStream.listen((_) {
+    _player.positionStream.listen((pos) {
       _tickStats();
+      _maybeSkipOutro(pos);
       notifyListeners();
     });
     _player.durationStream.listen((_) => notifyListeners());
@@ -84,6 +98,22 @@ class AudioPlayerService extends ChangeNotifier {
   double get speed => _player.speed;
   bool get hasBook => _currentBook != null;
 
+  /// 跳过片头秒数（0 = 不跳过）。
+  int get skipIntroSeconds => _skipIntroSeconds;
+
+  /// 跳过片尾秒数（0 = 不跳过）。
+  int get skipOutroSeconds => _skipOutroSeconds;
+
+  Future<void> setSkipIntroSeconds(int seconds) async {
+    await storage?.saveSkipIntroSeconds(seconds);
+    notifyListeners();
+  }
+
+  Future<void> setSkipOutroSeconds(int seconds) async {
+    await storage?.saveSkipOutroSeconds(seconds);
+    notifyListeners();
+  }
+
   bool get hasSleepTimer => _sleepTimer != null && _sleepTimer!.isActive;
   Duration? get sleepRemaining {
     if (_sleepEndTime == null) return null;
@@ -93,7 +123,12 @@ class AudioPlayerService extends ChangeNotifier {
 
   // --- Playback control ---
   /// 手动点播入口（书架/详情页/历史点“播放”）：新建收听会话。
-  Future<void> playBook(Book book, {int startChapter = 0}) async {
+  /// [startPosition] 用于从指定位置续播（历史记录 / 播放进度）。
+  Future<void> playBook(
+    Book book, {
+    int startChapter = 0,
+    Duration startPosition = Duration.zero,
+  }) async {
     _currentBook = book;
     _chapters = book.chapters;
     if (_chapters.isEmpty) {
@@ -102,8 +137,9 @@ class AudioPlayerService extends ChangeNotifier {
     }
     _currentChapterIndex = startChapter.clamp(0, _chapters.length - 1);
 
-    await _startNewSession();
+    await _startNewSession(startSeconds: startPosition.inSeconds);
     await _loadCurrentChapter();
+    await _seekToStart(startPosition);
     await _player.play();
     notifyListeners();
   }
@@ -114,21 +150,57 @@ class AudioPlayerService extends ChangeNotifier {
     _currentChapterIndex = index;
     await _startNewSession();
     await _loadCurrentChapter();
+    await _seekToStart(Duration.zero);
     await _player.play();
     notifyListeners();
   }
 
   /// 新建收听会话（手动点播时调用）。
-  Future<void> _startNewSession() async {
+  Future<void> _startNewSession({int startSeconds = 0}) async {
     if (sessionRepo == null || _currentBook == null) return;
     _activeSession = await sessionRepo!.create(
       bookId: _currentBook!.id,
       bookTitle: _currentBook!.title,
       chapterIndex: _currentChapterIndex,
-      positionSeconds: 0,
+      positionSeconds: startSeconds,
       chapterCount: _chapters.length,
       chapterTitle: _chapters[_currentChapterIndex].title,
     );
+  }
+
+  /// 章节加载完成后定位起始位置：续播位置优先，否则套用「跳过片头」。
+  Future<void> _seekToStart(Duration startPosition) async {
+    if (lastError != null) return; // 加载失败，别动播放器
+    final dur = _player.duration;
+    if (dur == null || dur.inMilliseconds <= 0) return;
+
+    var target = startPosition;
+    if (target <= Duration.zero) {
+      final skip = _skipIntroSeconds;
+      // 至少留 10 秒正片，避免短章节被整段跳完
+      if (skip <= 0 || dur.inSeconds <= skip + 10) return;
+      target = Duration(seconds: skip);
+    }
+    await _player.seek(target);
+  }
+
+  /// 片尾跳过：距结尾不足设定秒数时直接进入下一章（末章则直接结束）。
+  void _maybeSkipOutro(Duration pos) {
+    final skip = _skipOutroSeconds;
+    if (skip <= 0) return;
+    final dur = _player.duration;
+    if (dur == null || dur.inMilliseconds <= 0) return;
+    // 章节本身不比片尾长多少时不做判定，否则会连跳整本书
+    if (dur.inSeconds <= skip + 10) return;
+    if (dur - pos > Duration(seconds: skip)) return;
+    if (_outroSkippedChapterIndex == _currentChapterIndex) return;
+    _outroSkippedChapterIndex = _currentChapterIndex;
+
+    if (_currentChapterIndex < _chapters.length - 1) {
+      nextChapter();
+    } else {
+      _player.seek(dur);
+    }
   }
 
   Future<void> _loadCurrentChapter() async {
@@ -136,6 +208,7 @@ class AudioPlayerService extends ChangeNotifier {
 
     final chapter = _chapters[_currentChapterIndex];
     lastError = null;
+    _outroSkippedChapterIndex = null;
     debugPrint('[Player] 加载章节 ${_currentChapterIndex + 1}/${_chapters.length}: '
         '${chapter.title} (driveType=${chapter.driveType}, fileId=${chapter.fileId})');
 
@@ -227,6 +300,7 @@ class AudioPlayerService extends ChangeNotifier {
     if (_currentChapterIndex < _chapters.length - 1) {
       _currentChapterIndex++;
       await _loadCurrentChapter();
+      await _seekToStart(Duration.zero);
       await _player.play();
       notifyListeners();
     }
@@ -236,6 +310,7 @@ class AudioPlayerService extends ChangeNotifier {
     if (_currentChapterIndex > 0) {
       _currentChapterIndex--;
       await _loadCurrentChapter();
+      await _seekToStart(Duration.zero);
       await _player.play();
       notifyListeners();
     }
@@ -383,15 +458,15 @@ class AudioPlayerService extends ChangeNotifier {
   /// Resume playback from saved progress.
   Future<void> resumeFromProgress(Book book) async {
     final saved = _progressRepo.getProgress(book.id);
-    if (saved != null) {
-      await playBook(book, startChapter: saved.chapterIndex);
-      // playBook 返回时章节已加载完成，可直接定位续播位置
-      if (saved.positionSeconds > 0) {
-        await seek(Duration(seconds: saved.positionSeconds));
-      }
-    } else {
+    if (saved == null) {
       await playBook(book);
+      return;
     }
+    await playBook(
+      book,
+      startChapter: saved.chapterIndex,
+      startPosition: Duration(seconds: saved.positionSeconds),
+    );
   }
 
   /// Stop playback and release resources.

@@ -64,6 +64,8 @@ void main() async {
             player.sessionRepo = ctx.read<ListenSessionRepository>();
             // 收听时长统计：按天 + 按书累计
             player.statsRepo = ctx.read<StatsRepository>();
+            // 播放设置（跳过片头 / 跳过片尾秒数）
+            player.storage = storage;
             // Set up stream URL resolver for cloud drive chapters.
             player.streamUrlResolver = (chapter) async {
               if (chapter.driveType == null || chapter.fileId == null) {

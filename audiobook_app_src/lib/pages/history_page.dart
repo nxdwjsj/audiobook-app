@@ -208,8 +208,12 @@ class _SessionTile extends StatelessWidget {
       }
       return;
     }
-    // 通过播放器服务点播这本书并从 session 章节开始
-    context.read<AudioPlayerService>().playBook(_buildPlayBook(), startChapter: session.chapterIndex);
+    // 通过播放器服务点播这本书，并从 session 记录的章节与位置续播
+    context.read<AudioPlayerService>().playBook(
+          _buildPlayBook(),
+          startChapter: session.chapterIndex,
+          startPosition: Duration(seconds: session.positionSeconds),
+        );
     // 播放后自动进入详情页
     if (context.mounted) {
       context.pushThrottled(MaterialPageRoute(

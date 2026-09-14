@@ -132,7 +132,7 @@ dart run tool/quark_crawler.dart --keyword 三体 --out out.json          # 导�
 ### 4.2 播放链路
 
 ```
-书架/详情页/历史 点播
+书架/详情页/历史 点播（历史/进度会带 startChapter + startPosition）
         ↓
 AudioPlayerService.playBook() 或 jumpToChapter()   ← 手动点播：新建一条收听会话
         ↓
@@ -142,6 +142,10 @@ _loadCurrentChapter()
         ─ 否则 streamUrlResolver(chapter) → 按 driveType 路由到夸克/百度服务
         ↓
 _player.setUrl(url, headers: resolved.headers)
+        ↓
+_seekToStart()   ← 有续播位置就定位；否则套用「跳过片头」设置
+        ↓
+播放中 positionStream → _maybeSkipOutro()  ← 距结尾不足设定秒数 → nextChapter()
         ↓
 自动连播（completed）→ nextChapter()  ← 只更新当前会话，不新建
 ```
@@ -191,9 +195,11 @@ box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `li
 - **书籍详情页**：封面（无封面时按书名哈希生成渐变占位图）、作者/简介、统计行、
   完整目录（懒加载，几千章不卡）、正在播放章节高亮、目录工具条（回顶部 / 定位正在播放 / 正倒序切换）
 - **播放**：倍速（至 3.0x）、定时关闭（含自定义分钟）、上一章/下一章、自动连播、
-  下一章预加载（播到 80% 预解析）、迷你播放栏、播放页全局唯一
+  下一章预加载（播到 80% 预解析）、迷你播放栏、播放页全局唯一、
+  **跳过片头/片尾**（播放页右上角设置秒数；章节本身过短时不跳，避免连跳整本书）
 - **历史**：**会话制**——手动点播新建一条记录，自动连播只更新当前记录；
-  展示开始时间、听到第几章、已听时长、百分比；单条左滑删除、一键清空
+  展示开始时间、听到第几章、已听时长、百分比；单条左滑删除、一键清空；
+  点击记录从**记录的章节 + 位置**续播（不是从该章开头）
 - **书签已移除**；**搜索**保留（搜网盘 + 本地书架，入口在书架右上角）
 - **收听统计**（替代书签 tab）：月度方格热力图，每格一天、颜色越深当天听得越久、空白=没听；
   可翻月查看；另有累计总时长 / 有记录天数 / 单本时长排行（带占比条）

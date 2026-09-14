@@ -477,10 +477,11 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
     if (player.hasBook && player.currentBook!.id == _book.id) {
       return;
     }
-    await player.playBook(_toPlayBook(), startChapter: chapterIndex);
-    if (positionSeconds > 0) {
-      await player.seek(Duration(seconds: positionSeconds));
-    }
+    await player.playBook(
+      _toPlayBook(),
+      startChapter: chapterIndex,
+      startPosition: Duration(seconds: positionSeconds),
+    );
   }
 }
 
