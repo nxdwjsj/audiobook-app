@@ -5,10 +5,12 @@ import '../services/storage_service.dart';
 
 /// 收听会话仓库：历史的真实数据源。
 /// 每次手动点播 = 新建会话；自动连播/切章 = 更新当前会话。
+/// 每本书最多保留 1 条记录（最新的），总数上限 100 条。
 class ListenSessionRepository extends ChangeNotifier {
   final StorageService _storage;
 
   static const String _prefix = 'session_';
+  static const int _maxRecords = 100;
 
   ListenSessionRepository(this._storage);
 
@@ -17,10 +19,11 @@ class ListenSessionRepository extends ChangeNotifier {
         .map((v) =>
             ListenSession.fromJson(Map<String, dynamic>.from(v as Map)))
         .toList()
-      ..sort((a, b) => b.startedAt.compareTo(a.startedAt));
+      ..sort((a, b) => b.startedAt.compareTo(a.startedAt))
+      ..take(_maxRecords);
   }
 
-  /// 手动点播：新建一条会话。
+  /// 手动点播：新建一条会话，删除同本书的旧记录（每本书只保留最新）。
   Future<ListenSession> create({
     required String bookId,
     required String bookTitle,
@@ -29,6 +32,16 @@ class ListenSessionRepository extends ChangeNotifier {
     int? chapterCount,
     String? chapterTitle,
   }) async {
+    // 删除同一本书的所有旧 session（通过索引遍历 value+key）
+    for (var i = _storage.listenSessions.length - 1; i >= 0; i--) {
+      try {
+        final json = _storage.listenSessions.getAt(i) as Map<String, dynamic>;
+        if (json['bookId'] == bookId) {
+          await _storage.listenSessions.deleteAt(i);
+        }
+      } catch (_) {}
+    }
+
     final session = ListenSession(
       id: '$_prefix${DateTime.now().microsecondsSinceEpoch}',
       bookId: bookId,
