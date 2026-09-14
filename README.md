@@ -12,7 +12,8 @@
 - 应用名：`audiobook_app`，显示名「聆云」
 - 版本：`1.0.0+1`（首个正式版）
 - 平台目录：`android/`（主力）、`ios/`、`web/`（未验证）
-- **安装包**：[`releases/聆云_v1.0.0.apk`](releases/)（release 构建，用 debug 签名，可直接侧载安装）
+- **下载安装**：[Releases · v1.0.0](https://github.com/nxdwjsj/audiobook-app/releases/latest) → 点 `lingyun-v1.0.0.apk` 直接下载安装（release 构建、debug 签名、通用包）
+- 仓库内另有副本：`releases/聆云_v1.0.0.apk`
 
 **技术栈**
 
