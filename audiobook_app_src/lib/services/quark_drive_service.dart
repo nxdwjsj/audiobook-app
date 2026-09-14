@@ -108,6 +108,10 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
           ? AuthStatus.authenticated
           : AuthStatus.unauthenticated;
       notifyListeners();
+      // 连不上网时也会走到这里，别一律说成 Cookie 无效（用户会一直换 Cookie）
+      if (e is DioException && e.type != DioExceptionType.badResponse) {
+        throw Exception('网络请求失败，请检查网络后重试');
+      }
       throw Exception('Cookie 无效或已过期');
     }
   }

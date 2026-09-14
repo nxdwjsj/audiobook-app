@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:just_audio_background/just_audio_background.dart';
 import 'package:provider/provider.dart';
 
 import 'models/drive_item.dart';
@@ -18,6 +19,15 @@ import 'theme/app_theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 通知栏 / 锁屏播放控制（MediaSession）。必须在 runApp 之前初始化一次，
+  // 之后 AudioPlayer 的音频源只要带 MediaItem tag 就会自动出现在通知栏。
+  await JustAudioBackground.init(
+    androidNotificationChannelId: 'com.example.audiobook_app.channel.audio',
+    androidNotificationChannelName: '播放控制',
+    androidNotificationChannelDescription: '显示当前章节与播放进度',
+    androidNotificationOngoing: true,
+  );
 
   // 框架内部异常（红屏）默认不会把堆栈打到 logcat，这里显式打出来，
   // 否则真机上出问题只能看到红屏、拿不到堆栈。

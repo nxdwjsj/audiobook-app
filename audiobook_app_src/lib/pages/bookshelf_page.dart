@@ -50,17 +50,12 @@ class _BookshelfPageState extends State<BookshelfPage> {
               tooltip: '更多',
               onSelected: (value) => _onMenuSelected(context, value),
               itemBuilder: (ctx) => [
-                _menuTile('explore', Icons.travel_explore_rounded, '全网搜书',
-                    '多站点发现夸克分享'),
-                _menuTile(
-                    'search', Icons.search_rounded, '搜索', '在书架与网盘中查找'),
-                _menuTile('drive', Icons.cloud_rounded, '打开网盘',
-                    '浏览文件夹，长按文件夹可加入书架'),
-                _menuTile('local', Icons.download_rounded, '导入本地音频',
-                    '从手机存储选择音频文件'),
+                _menuTile('explore', Icons.travel_explore_rounded, '全网搜书'),
+                _menuTile('search', Icons.search_rounded, '搜索'),
+                _menuTile('drive', Icons.cloud_rounded, '打开网盘'),
+                _menuTile('local', Icons.download_rounded, '导入本地音频'),
                 if (books.length > 1)
-                  _menuTile('sort', Icons.swap_vert_rounded, '排序书架',
-                      '拖动调整书籍顺序'),
+                  _menuTile('sort', Icons.swap_vert_rounded, '排序书架'),
               ],
             ),
         ],
@@ -115,20 +110,21 @@ class _BookshelfPageState extends State<BookshelfPage> {
     context.read<BookshelfRepository>().reorder(books);
   }
 
-  /// 顶部「更多」菜单项（图标 + 标题 + 说明）。
+  /// 顶部「更多」菜单项。保持单行紧凑，避免菜单占掉半屏。
   PopupMenuItem<String> _menuTile(
     String value,
     IconData icon,
     String title,
-    String subtitle,
   ) {
     return PopupMenuItem(
       value: value,
-      child: ListTile(
-        contentPadding: EdgeInsets.zero,
-        leading: Icon(icon),
-        title: Text(title),
-        subtitle: Text(subtitle, style: const TextStyle(fontSize: 11.5)),
+      height: 46,
+      child: Row(
+        children: [
+          Icon(icon, size: 20),
+          const SizedBox(width: 12),
+          Text(title, style: const TextStyle(fontSize: 14.5)),
+        ],
       ),
     );
   }

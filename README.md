@@ -10,10 +10,10 @@
 一个 Flutter 有声书播放器（主用 Android 真机），核心能力是**直接播放网盘里的音频文件夹**，把网盘文件夹当作一本书来管理（目录、进度、续播、历史）。
 
 - 应用名：`audiobook_app`，显示名「聆云」
-- 版本：`1.0.0+1`（首个正式版）
+- 版本：`1.0.1+2`
 - 平台目录：`android/`（主力）、`ios/`、`web/`（未验证）
-- **下载安装**：[Releases · v1.0.0](https://github.com/nxdwjsj/audiobook-app/releases/latest) → 点 `lingyun-v1.0.0.apk` 直接下载安装（release 构建、debug 签名、通用包）
-- 仓库内另有副本：`releases/聆云_v1.0.0.apk`
+- **下载安装**：[Releases · 最新版](https://github.com/nxdwjsj/audiobook-app/releases/latest) → 点 `lingyun-v1.0.1.apk` 直接下载安装（release 构建、debug 签名、通用包）
+- 仓库内另有副本：`releases/聆云_v1.0.1.apk`
 
 **技术栈**
 
@@ -216,6 +216,10 @@ box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `li
   下一章预加载（播到 80% 预解析）、迷你播放栏、播放页全局唯一、
   **跳过片头/片尾**（播放页右上角设置秒数，**每本书独立配置**，存 `app_config` 的
   `skip_intro_<bookId>` / `skip_outro_<bookId>`；章节本身过短时不跳，避免连跳整本书）
+- **通知栏 / 锁屏播放控制**：`just_audio_background`——音频源带 `MediaItem` tag
+  （书名 / 章节名 / 封面），通知栏显示当前章节与播放进度，支持播放暂停、拖动进度、
+  切上一/下一章（单源模式下切章按钮由 App 内控制）；后台播放靠前台服务维持，
+  `MainActivity` 必须继承 `AudioServiceActivity`，Android 13+ 需 `POST_NOTIFICATIONS` 运行时授权
 - **历史**：**会话制**——手动点播新建一条记录，自动连播只更新当前记录；
   展示开始时间、听到第几章、已听时长、百分比；单条左滑删除、一键清空；
   点击记录从**记录的章节 + 位置**续播（不是从该章开头）
@@ -269,6 +273,8 @@ box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `li
 | 播放页卡顿 | `positionStream` 每次位置更新都 `notifyListeners()`，而播放页/迷你栏都 `context.watch`，导致整页（含封面图）高频重建 → 通知按**整秒节流**（进度显示精度只需到秒） |
 | 开片尾跳过后瞬间连跳好几章 | `_maybeSkipOutro` 里切章是异步的，期间位置事件仍停在旧章节末尾；而 `_loadCurrentChapter` 又把去重标记清空，于是连锁触发 `nextChapter()` → 改用 `_switchingChapter` 锁，**加载章节时不清、落到新章节（位置距结尾还早）时才解除** |
 | **代码被误删无法恢复** | 项目此前**没有 git**，删除即永久丢失 → 现已建仓，务必勤提交 |
+| **release 包装上后整个 App 断网**（WebView 白屏、Cookie 校验必失败） | Flutter 只在 `android/app/src/debug/AndroidManifest.xml` 里加了 `INTERNET` 权限，`main/AndroidManifest.xml` **没有** → debug 版正常、release 版无网络权限。**已修**：main 清单显式声明 `INTERNET`，发布前务必核对 |
+| 通知栏不显示播放卡片 | 三个条件缺一不可：main 清单注册 `com.ryanheise.audioservice.AudioService` + `MediaButtonReceiver`、`MainActivity` 继承 `AudioServiceActivity`、Android 13+ 授予 `POST_NOTIFICATIONS` |
 
 ---
 

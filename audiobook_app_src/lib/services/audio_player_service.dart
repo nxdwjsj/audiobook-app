@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:just_audio_background/just_audio_background.dart';
 import '../models/book.dart';
 import '../models/chapter.dart';
 import '../models/listen_session.dart';
@@ -230,6 +231,21 @@ class AudioPlayerService extends ChangeNotifier {
     }
   }
 
+  /// 通知栏 / 锁屏卡片展示的信息（just_audio_background 会读取音频源的 tag）。
+  MediaItem _mediaItemFor(Chapter chapter) {
+    final book = _currentBook;
+    final cover = book?.coverUrl;
+    final bookTitle = book?.title;
+    final author = book?.author;
+    return MediaItem(
+      id: chapter.fileId ?? chapter.filename,
+      title: chapter.title,
+      album: (bookTitle != null && bookTitle.isNotEmpty) ? bookTitle : '聆云',
+      artist: (author != null && author.isNotEmpty) ? author : '聆云',
+      artUri: (cover != null && cover.isNotEmpty) ? Uri.tryParse(cover) : null,
+    );
+  }
+
   Future<void> _loadCurrentChapter() async {
     if (_currentBook == null || _chapters.isEmpty) return;
 
@@ -274,8 +290,13 @@ class AudioPlayerService extends ChangeNotifier {
           return;
         }
         debugPrint('[Player] 解析到流地址: ${resolved.url.substring(0, resolved.url.length.clamp(0, 120))}...');
-        loadedDuration =
-            await _player.setUrl(resolved.url, headers: resolved.headers);
+        loadedDuration = await _player.setAudioSource(
+          AudioSource.uri(
+            Uri.parse(resolved.url),
+            headers: resolved.headers,
+            tag: _mediaItemFor(chapter),
+          ),
+        );
       } catch (e) {
         lastError = '获取播放链接失败: $e';
         debugPrint('[Player] $lastError');
@@ -285,7 +306,12 @@ class AudioPlayerService extends ChangeNotifier {
     } else if (_currentBook!.id.startsWith('local_')) {
       // Local imported books store the file path in chapter.filename
       try {
-        loadedDuration = await _player.setUrl(chapter.filename);
+        loadedDuration = await _player.setAudioSource(
+          AudioSource.uri(
+            Uri.parse(chapter.filename),
+            tag: _mediaItemFor(chapter),
+          ),
+        );
       } catch (e) {
         lastError = '加载音频失败: $e';
         debugPrint('[Player] $lastError');
