@@ -12,6 +12,7 @@ import 'services/baidu_drive_service.dart';
 import 'services/local_import_service.dart';
 import 'services/quark_drive_service.dart';
 import 'services/cloud_drive_service.dart';
+import 'services/resource_search_service.dart';
 import 'services/storage_service.dart';
 import 'theme/app_theme.dart';
 
@@ -64,6 +65,9 @@ void main() async {
         ),
         ChangeNotifierProvider<BaiduDriveService>.value(value: baiduDrive),
         ChangeNotifierProvider<QuarkDriveService>.value(value: quarkDrive),
+        Provider<ResourceSearchService>(
+          create: (_) => ResourceSearchService(quarkDrive),
+        ),
         ChangeNotifierProvider<AudioPlayerService>(
           create: (ctx) {
             final player = AudioPlayerService(

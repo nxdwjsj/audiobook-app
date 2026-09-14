@@ -11,6 +11,7 @@ import '../services/audio_player_service.dart';
 import '../services/local_import_service.dart';
 import '../widgets/throttled_navigator.dart';
 import 'drive_browser_page.dart';
+import 'resource_search_page.dart';
 import 'search_page.dart';
 import 'shelf_book_detail_page.dart';
 
@@ -33,6 +34,14 @@ class _BookshelfPageState extends State<BookshelfPage> {
       appBar: AppBar(
         title: Text(_reordering ? '拖动排序' : '我的书架'),
         actions: [
+          if (!_reordering)
+            IconButton(
+              icon: const Icon(Icons.travel_explore_rounded),
+              tooltip: '全网搜书',
+              onPressed: () => context.pushThrottled(
+                MaterialPageRoute(builder: (_) => const ResourceSearchPage()),
+              ),
+            ),
           if (!_reordering)
             IconButton(
               icon: const Icon(Icons.search_rounded),

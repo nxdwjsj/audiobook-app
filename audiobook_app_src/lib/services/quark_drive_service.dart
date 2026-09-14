@@ -414,18 +414,123 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
     return ShareParseResult(items: items, folderName: title);
   }
 
-  DriveItem _fromQuarkShareFile(Map<String, dynamic> f) {
+  DriveItem _fromQuarkShareFile(Map<String, dynamic> f, {String path = ''}) {
     final isDir = f['dir'] == true;
     final name = f['file_name']?.toString() ?? '';
     final ext = name.contains('.') ? name.split('.').last.toLowerCase() : null;
     return DriveItem(
       fileId: f['fid']?.toString() ?? '',
       name: name,
-      path: name,
+      path: path.isEmpty ? name : path,
       isDir: isDir,
       size: (f['size'] as num?)?.toInt() ?? 0,
       extension: ext,
       parentPath: '',
+    );
+  }
+
+  /// 列出一个分享目录（自动翻页），返回条目 + 分享标题。
+  Future<(List<Map<String, dynamic>>, String?)> _listShareDir(
+    String pwdId,
+    String stoken,
+    String fid,
+  ) async {
+    final out = <Map<String, dynamic>>[];
+    String? title;
+    var page = 1;
+    while (true) {
+      final resp = await _dio.get(
+        '$_apiBase/1/clouddrive/share/sharepage/detail',
+        queryParameters: {
+          'pr': 'ucpro',
+          'fr': 'pc',
+          'pwd_id': pwdId,
+          'stoken': stoken,
+          'pdir_fid': fid,
+          'force': '0',
+          '_page': '$page',
+          '_size': '100',
+          '_fetch_banner': '0',
+          '_fetch_share': '0',
+          '_fetch_total': '1',
+          '_sort': 'file_type:asc,file_name:asc',
+          'ver': '2',
+        },
+        options: Options(headers: _authHeaders),
+      );
+      final data = resp.data;
+      if (data is! Map || data['code'] != 0) {
+        _throwApiError('sharepage/detail', resp);
+      }
+      title ??= data['data']?['title']?.toString();
+      final list = (data['data']?['list'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>();
+      out.addAll(list);
+      if (list.length < 100) break;
+      page++;
+      if (page > 50) break; // 单目录上限 5000 条
+    }
+    return (out, title);
+  }
+
+  /// 递归解析分享：返回分享内**全部**音频文件（含子目录），供全网搜书用。
+  /// 目录遍历限 3 并发，避免大分享串行过慢。
+  Future<ShareParseResult> parseShareLinkRecursive(
+    String shareUrl, {
+    String? pwd,
+    int maxDepth = 4,
+  }) async {
+    final pwdId = extractPwdId(shareUrl);
+    if (pwdId.isEmpty) {
+      throw Exception('无法从链接中提取分享码');
+    }
+    final stoken = await _getShareToken(pwdId, pwd);
+
+    final items = <DriveItem>[];
+    String? shareTitle;
+    String? firstDirName;
+
+    Future<void> collect(
+      List<Map<String, dynamic>> entries,
+      String parentPath,
+      int depth,
+      List<(String, String, int)> queue,
+    ) async {
+      for (final e in entries) {
+        final name = e['file_name']?.toString() ?? '';
+        if (name.isEmpty) continue;
+        final childPath = parentPath.isEmpty ? name : '$parentPath/$name';
+        if (e['dir'] == true) {
+          if (depth < maxDepth) queue.add((e['fid']?.toString() ?? '0', childPath, depth + 1));
+        } else {
+          items.add(_fromQuarkShareFile(e, path: childPath));
+        }
+      }
+    }
+
+    final (rootEntries, rootTitle) = await _listShareDir(pwdId, stoken, '0');
+    shareTitle = rootTitle;
+    for (final e in rootEntries) {
+      if (e['dir'] == true) {
+        firstDirName ??= e['file_name']?.toString();
+      }
+    }
+    final queue = <(String, String, int)>[];
+    await collect(rootEntries, '', 1, queue);
+
+    Future<void> worker() async {
+      while (queue.isNotEmpty) {
+        final (fid, path, depth) = queue.removeLast();
+        final (entries, _) = await _listShareDir(pwdId, stoken, fid);
+        await collect(entries, path, depth, queue);
+      }
+    }
+
+    await Future.wait(List.generate(3, (_) => worker()));
+
+    return ShareParseResult(
+      items: items,
+      folderName: firstDirName ?? shareTitle ?? '分享资源',
     );
   }
 
