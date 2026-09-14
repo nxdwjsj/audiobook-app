@@ -44,9 +44,6 @@ dependencies:
   html: ^0.15.7
   crypto: ^3.0.7
 
-  # 二维码生成（夸克扫码登录）
-  qr: ^3.0.1
-
   # 内置网页登录（夸克官方登录页 → 自动读取 Cookie）
   # 必须是 6.2.0-beta 线：稳定版 6.1.5 依赖的 flutter_inappwebview_android 1.1.3
   # 仍用 getDefaultProguardFile('proguard-android.txt')，在 AGP 9 下直接构建失败。
