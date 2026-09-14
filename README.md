@@ -100,17 +100,28 @@ cd audiobook_app_src
 dart run tool/quark_crawler.dart --keyword 有声小说 --limit 8          # 搜索发现并解析
 dart run tool/quark_crawler.dart --links https://pan.quark.cn/s/xxx    # 只解析指定分享
 dart run tool/quark_crawler.dart --keyword 三体 --out out.json          # 导出完整 JSON
+dart run tool/quark_crawler.dart --pages https://xxx/list.html           # 直抓任意页面里的夸克链接
 ```
 
 | 环节 | 现状 |
 |---|---|
-| 解析分享（token → 递归列目录 → 过滤音频） | ✅ 稳定可用 |
+| 解析分享（token → 递归列目录 → 过滤音频） | ✅ 稳定可用；目录遍历为 4 并发工作池，大分享不再串行慢爬 |
+| 音频识别 | ✅ 扩展名 / `obj_category` / `format_type` 三者任一命中即算音频 |
+| 关键词相关性 | ✅ 解析后按标题+文件名打分，报告分「命中关键词」与「无关」两组 |
 | 发现：B 站搜索接口 | ✅ 可用（缺 `buvid3` 会 412，脚本会取 Cookie 并本地兜底） |
+| 发现：第一故事 yigushi.com 站内搜索 | ✅ 可用且命中率高（Destoon CMS，`/<模块>/search.php?kw=`；文章页正文直接贴夸克链接；按 token 分词搜「有声小说/评书/戏曲/儿童」四板块） |
+| 发现：Mp3故事网 mp3.yangzhiyi.com 站内搜索 | ✅ 可用（Z-Blog CMS，POST `/zb_system/cmd.php?act=search`；该站搜索会匹配简介，故只认标题命中的条目） |
+| 发现：slowread.net 有声书合集页 | ✅ 可用（静态大列表，`<span>标题</span>` 紧跟夸克链接，成对抽取、无需搜索与文章页） |
+| 发现：`--pages` 任意页面直抓 | ✅ 可用（不做关键词过滤，页面由调用者挑；实测单页可抽 690 条链接，适合临时接入新聚合站） |
 | 发现：Bing/360/Sogou 结果页 | ❌ 实测基本被反爬拦掉，需 `--engine` 才启用 |
-| 非法/失效分享 | ✅ 正确报错（`41006` 分享不存在、`41010` 违规内容） |
+| 非法/失效分享 | ✅ 正确报错（`41006` 分享不存在、`41010` 违规内容、`41031` 分享者被封禁） |
 
 已知限制：搜索接口的 `description` 常被平台截断，所以简介没贴链接的视频会漏掉；
-命中率强依赖关键词（`<书名> 夸克` 效果最好）。
+命中率强依赖关键词（`<书名> 夸克` 效果最好）。B 站渠道对「书名+平台名」（如
+`龙族 喜马拉雅`）常只返回 APK/下载工具类分享，这种情况由 yigushi 站内搜索兜底
+（实测能直接命中《龙族》699 集全的文章页）；若两渠道都无结果，报告会明确显示
+「命中关键词 0 个」，不会拿无关资源冒充。JSON 里的 `otherSample` 字段可看到
+非音频文件名抽样，便于判断是「分享里没音频」还是「识别不出音频」。
 
 ---
 

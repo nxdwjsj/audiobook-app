@@ -47,3 +47,6 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# 爬虫输出（体积大、可随时重新生成，不入库）
+tool/out_*.json
