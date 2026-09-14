@@ -31,57 +31,36 @@ class _BookshelfPageState extends State<BookshelfPage> {
     final books = bookshelfRepo.getAll();
 
     return Scaffold(
+      // 透明背景：露出 HomePage 的渐变，让主界面更通透
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
         title: Text(_reordering ? '拖动排序' : '我的书架'),
         actions: [
-          if (!_reordering)
-            IconButton(
-              icon: const Icon(Icons.travel_explore_rounded),
-              tooltip: '全网搜书',
-              onPressed: () => context.pushThrottled(
-                MaterialPageRoute(builder: (_) => const ResourceSearchPage()),
+          if (_reordering)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: TextButton(
+                onPressed: () => setState(() => _reordering = false),
+                child: const Text('完成'),
               ),
-            ),
-          if (!_reordering)
-            IconButton(
-              icon: const Icon(Icons.search_rounded),
-              tooltip: '搜索',
-              onPressed: () => context.pushThrottled(
-                MaterialPageRoute(builder: (_) => const SearchPage()),
-              ),
-            ),
-          if (books.length > 1)
-            IconButton(
-              icon: Icon(_reordering
-                  ? Icons.check_rounded
-                  : Icons.swap_vert_rounded),
-              tooltip: _reordering ? '完成排序' : '排序',
-              onPressed: () => setState(() => _reordering = !_reordering),
-            ),
-          if (!_reordering)
+            )
+          else
             PopupMenuButton<String>(
-              icon: const Icon(Icons.add_rounded),
-              tooltip: '添加书籍',
-              onSelected: (value) => _handleAddAction(context, value),
-              itemBuilder: (ctx) => const [
-                PopupMenuItem(
-                  value: 'drive',
-                  child: ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.cloud_rounded),
-                    title: Text('打开网盘'),
-                    subtitle: Text('浏览文件夹，长按文件夹可加入书架'),
-                  ),
-                ),
-                PopupMenuItem(
-                  value: 'local',
-                  child: ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.download_rounded),
-                    title: Text('导入本地音频'),
-                    subtitle: Text('从手机存储选择音频文件'),
-                  ),
-                ),
+              icon: const Icon(Icons.more_horiz_rounded),
+              tooltip: '更多',
+              onSelected: (value) => _onMenuSelected(context, value),
+              itemBuilder: (ctx) => [
+                _menuTile('explore', Icons.travel_explore_rounded, '全网搜书',
+                    '多站点发现夸克分享'),
+                _menuTile(
+                    'search', Icons.search_rounded, '搜索', '在书架与网盘中查找'),
+                _menuTile('drive', Icons.cloud_rounded, '打开网盘',
+                    '浏览文件夹，长按文件夹可加入书架'),
+                _menuTile('local', Icons.download_rounded, '导入本地音频',
+                    '从手机存储选择音频文件'),
+                if (books.length > 1)
+                  _menuTile('sort', Icons.swap_vert_rounded, '排序书架',
+                      '拖动调整书籍顺序'),
               ],
             ),
         ],
@@ -96,25 +75,29 @@ class _BookshelfPageState extends State<BookshelfPage> {
                   itemCount: books.length,
                   itemBuilder: (context, index) {
                     final book = books[index];
-                    return Material(
+                    return Padding(
                       key: ValueKey(book.id),
-                      color: Colors.transparent,
-                      child: ListTile(
-                        leading: const Icon(Icons.drag_indicator_rounded),
-                        title: Text(book.title,
-                            maxLines: 1, overflow: TextOverflow.ellipsis),
-                        subtitle: Text('${book.chapterCount} 集'),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 4),
+                      child: Card(
+                        margin: EdgeInsets.zero,
+                        child: ListTile(
+                          leading: const Icon(Icons.drag_indicator_rounded),
+                          title: Text(book.title,
+                              maxLines: 1, overflow: TextOverflow.ellipsis),
+                          subtitle: Text('${book.chapterCount} 集'),
+                        ),
                       ),
                     );
                   },
                 )
               : GridView.builder(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 3,
-                    childAspectRatio: 0.52,
-                    crossAxisSpacing: 12,
-                    mainAxisSpacing: 12,
+                    childAspectRatio: 0.53,
+                    crossAxisSpacing: 14,
+                    mainAxisSpacing: 18,
                   ),
                   itemCount: books.length,
                   itemBuilder: (context, index) {
@@ -132,11 +115,41 @@ class _BookshelfPageState extends State<BookshelfPage> {
     context.read<BookshelfRepository>().reorder(books);
   }
 
-  /// 加号菜单分发：打开网盘 / 本地导入。
-  void _handleAddAction(BuildContext context, String action) {
+  /// 顶部「更多」菜单项（图标 + 标题 + 说明）。
+  PopupMenuItem<String> _menuTile(
+    String value,
+    IconData icon,
+    String title,
+    String subtitle,
+  ) {
+    return PopupMenuItem(
+      value: value,
+      child: ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: Icon(icon),
+        title: Text(title),
+        subtitle: Text(subtitle, style: const TextStyle(fontSize: 11.5)),
+      ),
+    );
+  }
+
+  /// 「更多」菜单分发：搜书 / 搜索 / 排序 / 打开网盘 / 导入本地。
+  Future<void> _onMenuSelected(BuildContext context, String action) async {
     switch (action) {
+      case 'explore':
+        context.pushThrottled(
+          MaterialPageRoute(builder: (_) => const ResourceSearchPage()),
+        );
+        break;
+      case 'search':
+        context.pushThrottled(
+          MaterialPageRoute(builder: (_) => const SearchPage()),
+        );
+        break;
+      case 'sort':
+        setState(() => _reordering = true);
+        break;
       case 'drive':
-        // 默认打开夸克网盘
         context.pushThrottled(MaterialPageRoute(
           builder: (_) => const DriveBrowserPage(
             initialDrive: DriveType.quark,
@@ -144,7 +157,7 @@ class _BookshelfPageState extends State<BookshelfPage> {
         ));
         break;
       case 'local':
-        _importLocalFile(context);
+        await _importLocalFile(context);
         break;
     }
   }
@@ -171,31 +184,51 @@ class _EmptyBookshelf extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.library_books_rounded,
-            size: 80,
-            color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            '书架空空如也',
-            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 44),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 104,
+              height: 104,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    scheme.primary.withValues(alpha: 0.18),
+                    scheme.tertiary.withValues(alpha: 0.12),
+                  ],
                 ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '点右上角 + 从网盘导入书籍，或用搜索找网盘文件',
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-          ),
-        ],
+              ),
+              child: Icon(
+                Icons.library_books_rounded,
+                size: 44,
+                color: scheme.primary,
+              ),
+            ),
+            const SizedBox(height: 22),
+            Text(
+              '书架空空如也',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              '点右上角「⋮」从网盘导入本地音频，\n或用「全网搜书」发现全网资源',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                    height: 1.7,
+                  ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -274,10 +307,10 @@ class _BookshelfItem extends StatelessWidget {
                     left: 6,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 3),
+                          horizontal: 7, vertical: 3),
                       decoration: BoxDecoration(
-                        color: Colors.black54,
-                        borderRadius: BorderRadius.circular(8),
+                        color: Colors.black.withValues(alpha: 0.55),
+                        borderRadius: BorderRadius.circular(20),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -299,13 +332,14 @@ class _BookshelfItem extends StatelessWidget {
                 ],
               ),
             ),
-            LinearProgressIndicator(
-              value: progressPercent,
-              minHeight: 3,
-              backgroundColor: Colors.transparent,
-            ),
+            if (progressPercent > 0)
+              LinearProgressIndicator(
+                value: progressPercent,
+                minHeight: 3,
+                backgroundColor: Colors.transparent,
+              ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(6, 4, 6, 6),
+              padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -315,16 +349,17 @@ class _BookshelfItem extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
                           fontWeight: FontWeight.w600,
-                          fontSize: 12,
+                          fontSize: 12.5,
+                          height: 1.25,
                         ),
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 3),
                   Text(
                     progressPercent > 0
                         ? '已听 ${(progressPercent * 100).round()}%'
                         : '${book.chapterCount} 集',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          fontSize: 10,
+                          fontSize: 10.5,
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
                   ),

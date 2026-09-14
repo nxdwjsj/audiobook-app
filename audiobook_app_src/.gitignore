@@ -50,3 +50,6 @@ app.*.map.json
 
 # 爬虫输出（体积大、可随时重新生成，不入库）
 tool/out_*.json
+
+# 调试截图（adb screencap 临时产物）
+/*.png

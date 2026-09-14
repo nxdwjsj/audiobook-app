@@ -39,6 +39,7 @@ class _StatsPageState extends State<StatsPage> {
     final stats = context.watch<StatsRepository>();
 
     return Scaffold(
+      backgroundColor: Colors.transparent,
       appBar: AppBar(title: const Text('收听统计')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),

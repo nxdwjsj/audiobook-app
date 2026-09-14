@@ -62,7 +62,9 @@ abstract class CloudDriveService {
 
   /// Get a real-time streamable URL for a file inside a shared link.
   /// [shareUrl] must have been parsed before (or is re-parsed on demand).
-  Future<ResolvedStream> getShareAudioStreamUrl(String shareUrl, String fileId);
+  /// [filename] 用于按文件名找回转存后的文件（分享内 fid 与网盘 fid 不同）。
+  Future<ResolvedStream> getShareAudioStreamUrl(String shareUrl, String fileId,
+      {String? filename});
 
   /// Get user account info (nickname, used space, etc.).
   Future<Map<String, dynamic>> getAccountInfo();

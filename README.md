@@ -1,4 +1,4 @@
-# 开发交接文档（听书 App）
+# 开发交接文档（聆云 · 听书 App）
 
 > 本文档用于**新会话继续开发**。读完这篇即可上手，无需翻历史对话。
 > 项目路径：`D:\Project\TraeWorkspace\audiobook\audiobook_app_src`
@@ -9,9 +9,10 @@
 
 一个 Flutter 有声书播放器（主用 Android 真机），核心能力是**直接播放网盘里的音频文件夹**，把网盘文件夹当作一本书来管理（目录、进度、续播、历史）。
 
-- 应用名：`audiobook_app`，显示名「听书」
-- 版本：`1.0.0+1`
+- 应用名：`audiobook_app`，显示名「聆云」
+- 版本：`1.0.0+1`（首个正式版）
 - 平台目录：`android/`（主力）、`ios/`、`web/`（未验证）
+- **安装包**：[`releases/聆云_v1.0.0.apk`](releases/)（release 构建，用 debug 签名，可直接侧载安装）
 
 **技术栈**
 
@@ -168,7 +169,8 @@ _seekToStart()   ← 有续播位置就定位；否则套用「跳过片头」�
 `streamUrlResolver` 在 [main.dart](audiobook_app_src/lib/main.dart) 中定义：
 
 - 按 `chapter.driveType` 严格路由（夸克分享链接**不能**交给百度服务）
-- 分享来源走 `getShareAudioStreamUrl(shareUrl, fileId)`，自有网盘走 `getAudioStreamUrl(fileId)`
+- 分享来源走 `getShareAudioStreamUrl(shareUrl, fileId, filename)`（夸克会先自动转存），
+  自有网盘走 `getAudioStreamUrl(fileId)`
 
 ### 4.3 本地存储（Hive）
 
@@ -218,8 +220,14 @@ box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `li
   点击记录从**记录的章节 + 位置**续播（不是从该章开头）
 - **搜索**：书架内搜索（网盘+本地）；**全网搜书**（书架右上角地球图标）——
   复用爬虫的 5 路发现渠道（B 站 / yigushi / yangzhiyi / slowread / fangkong）发现夸克分享，
-  递归解析出音频数与体积，按关键词打分排序，可一键加入书架或直接播放
-  （`ResourceSearchService` + `QuarkDriveService.parseShareLinkRecursive`）
+  递归解析出音频数与体积，按关键词打分排序，边解析边出结果（首个结果几秒可见），
+  可一键加入书架或直接播放（`ResourceSearchService` + `QuarkDriveService.parseShareLinkRecursive`）
+- **分享书播放必须转存**：夸克分享文件**没有直链**（`share/sharepage/download` 返回 404），
+  必须用 `share/sharepage/save` 转存到自己网盘（异步任务 + 轮询 `task`，目标目录优先
+  「来自：分享」）后，用转存得到的新 fid 走 `file/download` 播放。
+  搜书页点「加入书架/播放」会自动转存（章节 fid 直接存网盘 fid，播放秒开）；
+  历史遗留的分享书（章节存的是分享内 fid）在首次播放时懒转存，并按文件名回配 fid
+  （`QuarkDriveService.saveShareToMyDrive` / `getShareAudioStreamUrl`）
 - **收听统计**（替代书签 tab）：月度方格热力图，每格一天、颜色越深当天听得越久、空白=没听；
   可翻月查看；另有累计总时长 / 有记录天数 / 单本时长排行（带占比条）
 - **封面文件生命周期**：编辑信息选图 → 复制到 App 私有目录 `app_flutter/covers/`；

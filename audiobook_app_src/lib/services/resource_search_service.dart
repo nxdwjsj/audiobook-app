@@ -71,26 +71,23 @@ class ResourceSearchService {
 
   String? _biliCookieCache;
 
-  /// 搜索入口。[onProgress] 用于把阶段进度回传给 UI。
+  /// 搜索入口。[onProgress] 回传阶段进度；[onResult] 在每解析完一个分享时立即
+  /// 回调，用于边解析边出结果（不必等全部解析完）。多个分享并发解析。
   Future<List<ResourceResult>> search(
     String keyword, {
     int maxParse = 8,
+    int concurrency = 3,
     void Function(String message)? onProgress,
+    void Function(ResourceResult result)? onResult,
   }) async {
     onProgress?.call('正在发现分享链接…');
     final hits = await _discover(keyword, onProgress);
     if (hits.isEmpty) return [];
 
     // 策展类渠道优先，避免 B 站噪声挤占解析名额
-    const priority = {
-      'fangkong': 0,
-      'yigushi': 0,
-      'slowread': 0,
-      'yangzhiyi': 0,
-    };
     final indexed = [for (var i = 0; i < hits.length; i++) (i, hits[i])];
     indexed.sort((a, b) {
-      final c = (priority[a.$2.source] ?? 1).compareTo(priority[b.$2.source] ?? 1);
+      final c = _channelRank(a.$2.source).compareTo(_channelRank(b.$2.source));
       return c != 0 ? c : a.$1.compareTo(b.$1);
     });
     var targets = [for (final e in indexed) e.$2];
@@ -99,12 +96,22 @@ class ResourceSearchService {
     final tokens =
         keyword.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
     final results = <ResourceResult>[];
-    for (var i = 0; i < targets.length; i++) {
-      final hit = targets[i];
-      onProgress?.call('解析 ${i + 1}/${targets.length}：${hit.pwdId}');
-      results.add(await _parseOne(hit, tokens));
-      await _sleep(300);
+    final queue = [...targets];
+    var started = 0;
+
+    Future<void> worker() async {
+      while (queue.isNotEmpty) {
+        final hit = queue.removeAt(0);
+        started++;
+        onProgress?.call('解析 $started/${targets.length}：${hit.pwdId}');
+        final r = await _parseOne(hit, tokens);
+        results.add(r);
+        onResult?.call(r);
+      }
     }
+
+    await Future.wait(
+        List.generate(min(concurrency, targets.length), (_) => worker()));
 
     results.sort((a, b) {
       // 成功的排前面；再按关键词命中、音频数
@@ -180,6 +187,20 @@ class ResourceSearchService {
   // 发现渠道
   // ------------------------------------------------------------------
 
+  /// 渠道优先级：0 = 策展类（提取码通常准确），1 = 其它（如 B 站，码多为推测）。
+  static int _channelRank(String source) {
+    switch (source) {
+      case 'fangkong':
+      case 'yigushi':
+      case 'slowread':
+      case 'yangzhiyi':
+      case 'page':
+        return 0;
+      default:
+        return 1;
+    }
+  }
+
   Future<List<ResourceHit>> _discover(
     String keyword,
     void Function(String)? onProgress,
@@ -187,61 +208,48 @@ class ResourceSearchService {
     final found = <String, ResourceHit>{};
     void addAll(List<ResourceHit> list) {
       for (final l in list) {
-        found.putIfAbsent(l.pwdId, () => l);
+        final exist = found[l.pwdId];
+        if (exist == null) {
+          found[l.pwdId] = l;
+        } else if (_channelRank(l.source) < _channelRank(exist.source)) {
+          // 同一个分享被多个渠道发现时，保留优先级更高渠道的提取码
+          // （B 站的码常是从页面上下文猜的，容易 41007）
+          found[l.pwdId] = l;
+        }
       }
     }
 
-    onProgress?.call('渠道：B 站搜索');
-    try {
-      addAll(await _bilibili(keyword));
-    } catch (e) {
-      debugPrint('[ResourceSearch] bilibili: $e');
-    }
-
-    onProgress?.call('渠道：第一故事');
-    try {
-      addAll(await _yigushi(keyword));
-    } catch (e) {
-      debugPrint('[ResourceSearch] yigushi: $e');
-    }
-
-    onProgress?.call('渠道：Mp3故事网');
-    try {
-      addAll(await _yangzhiyi(keyword));
-    } catch (e) {
-      debugPrint('[ResourceSearch] yangzhiyi: $e');
-    }
-
-    onProgress?.call('渠道：slowread 合集');
-    try {
-      addAll(await _slowread(keyword));
-    } catch (e) {
-      debugPrint('[ResourceSearch] slowread: $e');
-    }
-
-    onProgress?.call('渠道：放空一夏');
-    try {
-      addAll(await _fangkong(keyword));
-    } catch (e) {
-      debugPrint('[ResourceSearch] fangkong: $e');
-    }
+    // 5 个渠道并行发现；单渠道超时/被封禁不影响其它渠道。
+    onProgress?.call('发现中：B站 / 第一故事 / 故事网 / 合集 / 放空（并行）');
+    final channels = <String, Future<List<ResourceHit>>>{
+      'bilibili': _bilibili(keyword),
+      'yigushi': _yigushi(keyword),
+      'yangzhiyi': _yangzhiyi(keyword),
+      'slowread': _slowread(keyword),
+      'fangkong': _fangkong(keyword),
+    };
+    await Future.wait(channels.entries.map((e) async {
+      try {
+        addAll(await e.value);
+      } catch (err) {
+        debugPrint('[ResourceSearch] ${e.key}: $err');
+      }
+    }));
 
     return found.values.toList();
   }
 
   Future<List<ResourceHit>> _bilibili(String keyword) async {
     final out = <ResourceHit>[];
-    for (final q in {'$keyword 夸克', '$keyword 夸克网盘', '$keyword 有声小说', keyword}) {
+    for (final q in {'$keyword 夸克', keyword}) {
       try {
-        for (var page = 1; page <= 2; page++) {
-          final enc = Uri.encodeComponent(q);
-          final url = 'https://api.bilibili.com/x/web-interface/search/type'
-              '?search_type=video&keyword=$enc&page=$page&page_size=20';
-          final body = await _biliGet(url);
-          final data = jsonDecode(body);
-          if (data is! Map || data['code'] != 0) break;
+        final enc = Uri.encodeComponent(q);
+        final url = 'https://api.bilibili.com/x/web-interface/search/type'
+            '?search_type=video&keyword=$enc&page=1&page_size=20';
+        final body = await _biliGet(url);
+        final data = jsonDecode(body);
+        if (data is Map && data['code'] == 0) {
           final results = (data['data']?['result'] as List<dynamic>? ?? []);
-          if (results.isEmpty) break;
           final sb = StringBuffer();
           for (final r in results) {
             if (r is! Map) continue;
@@ -251,12 +259,11 @@ class ResourceSearchService {
               ..writeln(r['tag'] ?? '');
           }
           out.addAll(_extract(sb.toString(), 'bilibili'));
-          await _sleep(300);
         }
       } catch (e) {
         debugPrint('[ResourceSearch] bilibili「$q」: $e');
       }
-      await _sleep(400);
+      await _sleep(150);
     }
     return out;
   }
@@ -317,8 +324,15 @@ class ResourceSearchService {
     final queries = {...tokens, if (tokens.length > 1) keyword};
     for (final q in queries) {
       for (final mod in const ['youshengxiaoshuo', 'soft', 'xiqu', 'baby']) {
-        final html = await _text(
-            'https://www.yigushi.com/$mod/search.php?kw=${Uri.encodeComponent(q)}');
+        String html;
+        try {
+          html = await _text(
+              'https://www.yigushi.com/$mod/search.php?kw=${Uri.encodeComponent(q)}');
+        } catch (e) {
+          // 单个板块请求失败不该让整个渠道归零
+          debugPrint('[ResourceSearch] yigushi/$mod: $e');
+          continue;
+        }
         final re = RegExp(
             r'<a href="(https://www\.yigushi\.com/[^"]+\.html)"[^>]*?target="_blank"[^>]*?title="([^"]+)"');
         final articles = <String>[];
@@ -333,9 +347,9 @@ class ResourceSearchService {
           try {
             out.addAll(_extract(await _text(url), 'yigushi'));
           } catch (_) {}
-          await _sleep(300);
+          await _sleep(120);
         }
-        await _sleep(300);
+        await _sleep(120);
       }
     }
     return out;
@@ -368,9 +382,9 @@ class ResourceSearchService {
         try {
           out.addAll(_extract(await _text(url), 'yangzhiyi'));
         } catch (_) {}
-        await _sleep(300);
+        await _sleep(120);
       }
-      await _sleep(300);
+      await _sleep(120);
     }
     return out;
   }

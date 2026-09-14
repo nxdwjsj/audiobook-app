@@ -10,6 +10,7 @@ import '../models/playback_progress.dart';
 import '../repositories/bookshelf_repository.dart';
 import '../repositories/progress_repository.dart';
 import '../services/audio_player_service.dart';
+import '../theme/app_theme.dart';
 import '../widgets/mini_player.dart';
 import '../widgets/throttled_navigator.dart';
 import 'drive_browser_page.dart';
@@ -125,7 +126,14 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
           ),
         ],
       ),
-      body: _buildBody(context, isCurrent, player, progress),
+      // 顶栏透明 + 背景取渐变首色，body 用同色渐变衔接
+      backgroundColor: AppTheme.pageTopColor(Theme.of(context).brightness),
+      body: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: AppTheme.pageGradient(Theme.of(context).brightness),
+        ),
+        child: _buildBody(context, isCurrent, player, progress),
+      ),
       bottomNavigationBar: _buildBottomBar(context, isCurrent, player, progress),
     );
   }

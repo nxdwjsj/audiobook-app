@@ -5,6 +5,7 @@ import '../models/bookshelf_book.dart';
 import '../models/drive_item.dart';
 import '../repositories/bookshelf_repository.dart';
 import '../services/audio_player_service.dart';
+import '../services/quark_drive_service.dart';
 import '../services/resource_search_service.dart';
 import '../widgets/throttled_navigator.dart';
 
@@ -21,6 +22,7 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
   final List<ResourceResult> _results = [];
   String? _progress;
   bool _searching = false;
+  bool _shelving = false;
 
   @override
   void dispose() {
@@ -29,6 +31,8 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
   }
 
   Future<void> _search() async {
+    // 输入框回车和搜索按钮都可能触发，搜索中直接忽略，避免两次结果交错
+    if (_searching) return;
     final kw = _keyword.text.trim();
     if (kw.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -49,55 +53,100 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
       onProgress: (m) {
         if (mounted) setState(() => _progress = m);
       },
+      // 边解析边出结果，首条结果几秒内就能看到。
+      onResult: (r) {
+        if (!mounted) return;
+        setState(() {
+          _results.add(r);
+          _results.sort(_compare);
+        });
+      },
     );
     if (mounted) {
       setState(() {
-        _results.addAll(list);
+        _results
+          ..clear()
+          ..addAll(list);
         _searching = false;
         _progress = null;
       });
     }
   }
 
+  static int _compare(ResourceResult a, ResourceResult b) {
+    if ((a.error == null) != (b.error == null)) {
+      return a.error == null ? -1 : 1;
+    }
+    final c = b.keywordHits.compareTo(a.keywordHits);
+    if (c != 0) return c;
+    return b.audioItems.length.compareTo(a.audioItems.length);
+  }
+
   /// 加入书架（可选立即播放）。返回是否成功。
+  ///
+  /// 夸克分享文件没有直链，必须先转存到自己的网盘，转存后的 fid 才能播放。
   Future<bool> _shelve(ResourceResult r, {bool play = false}) async {
+    // 转存 + 入架期间锁住，连点会并发 playBook 并把播放页压两层
+    if (_shelving) return false;
     final messenger = ScaffoldMessenger.of(context);
     final audio = r.audioItems;
     if (audio.isEmpty) {
       messenger.showSnackBar(const SnackBar(content: Text('该分享里没有音频文件')));
       return false;
     }
-    final book = DriveItem.folderToBook(
-      folderName: r.title,
-      audioFiles: audio,
-      driveType: DriveType.quark,
-      bookId: DriveItem.bookIdFor(DriveType.quark, r.shareUrl),
-      shareUrl: r.shareUrl,
-    );
-    final repo = context.read<BookshelfRepository>();
-    final player = context.read<AudioPlayerService>();
-    await repo.add(BookshelfBook(
-      id: book.id,
-      title: book.title,
-      author: book.author,
-      chapterCount: book.chapters.length,
-      driveType: DriveType.quark,
-      isFromShare: true,
-      shareUrl: r.shareUrl,
-      chapters: book.chapters,
-    ));
-    if (play) {
-      await player.playBook(book);
-      if (mounted) context.pushPlayerPage();
-    }
-    if (mounted) {
-      messenger.showSnackBar(SnackBar(
-        content: Text(play
-            ? '已开始播放「${book.title}」'
-            : '「${book.title}」已加入书架（${book.chapters.length} 集）'),
+    setState(() => _shelving = true);
+    try {
+      final repo = context.read<BookshelfRepository>();
+      final player = context.read<AudioPlayerService>();
+      final quark = context.read<QuarkDriveService>();
+
+      setState(() => _progress = '正在转存「${r.title}」到你的夸克网盘…');
+      List<DriveItem> saved;
+      try {
+        saved = await quark.saveShareToMyDrive(r.shareUrl, pwd: r.passcode);
+      } catch (e) {
+        if (mounted) setState(() => _progress = null);
+        messenger.showSnackBar(SnackBar(content: Text('转存失败：$e')));
+        return false;
+      }
+      if (mounted) setState(() => _progress = null);
+      if (saved.isEmpty) {
+        messenger.showSnackBar(const SnackBar(content: Text('该分享里没有可播放的音频文件')));
+        return false;
+      }
+
+      // 章节 fid 已是自己网盘的 fid，因此不再标记为分享文件（走普通下载直链）。
+      final book = DriveItem.folderToBook(
+        folderName: r.title,
+        audioFiles: saved,
+        driveType: DriveType.quark,
+        bookId: DriveItem.bookIdFor(DriveType.quark, r.shareUrl),
+      );
+      await repo.add(BookshelfBook(
+        id: book.id,
+        title: book.title,
+        author: book.author,
+        chapterCount: book.chapters.length,
+        driveType: DriveType.quark,
+        isFromShare: false,
+        shareUrl: r.shareUrl,
+        chapters: book.chapters,
       ));
+      if (play) {
+        await player.playBook(book);
+        if (mounted) context.pushPlayerPage();
+      }
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(
+          content: Text(play
+              ? '已开始播放「${book.title}」'
+              : '「${book.title}」已转存并加入书架（${book.chapters.length} 集）'),
+        ));
+      }
+      return true;
+    } finally {
+      if (mounted) setState(() => _shelving = false);
     }
-    return true;
   }
 
   @override
@@ -191,17 +240,29 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
             : Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (!inShelf)
+                  if (_shelving)
+                    // 转存期间给个明确的忙碌反馈，顺便锁住按钮
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 14),
+                      child: SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2.5),
+                      ),
+                    )
+                  else ...[
+                    if (!inShelf)
+                      IconButton(
+                        icon: const Icon(Icons.add_rounded),
+                        tooltip: '加入书架',
+                        onPressed: () => _shelve(r),
+                      ),
                     IconButton(
-                      icon: const Icon(Icons.add_rounded),
-                      tooltip: '加入书架',
-                      onPressed: () => _shelve(r),
+                      icon: const Icon(Icons.play_arrow_rounded),
+                      tooltip: '播放',
+                      onPressed: () => _shelve(r, play: true),
                     ),
-                  IconButton(
-                    icon: const Icon(Icons.play_arrow_rounded),
-                    tooltip: '播放',
-                    onPressed: () => _shelve(r, play: true),
-                  ),
+                  ],
                 ],
               ),
       ),

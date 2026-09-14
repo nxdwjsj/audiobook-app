@@ -94,7 +94,8 @@ void main() async {
               try {
                 if (isShare) {
                   return await service.getShareAudioStreamUrl(
-                      chapter.shareUrl!, chapter.fileId!);
+                      chapter.shareUrl!, chapter.fileId!,
+                      filename: chapter.filename);
                 }
                 return await service.getAudioStreamUrl(chapter.fileId!);
               } catch (e, st) {
@@ -117,7 +118,7 @@ class AudiobookApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '听书',
+      title: '聆云',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme(),
       darkTheme: AppTheme.darkTheme(),

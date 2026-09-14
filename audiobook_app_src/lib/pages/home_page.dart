@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../theme/app_theme.dart';
 import '../widgets/mini_player.dart';
 import 'bookshelf_page.dart';
 import 'history_page.dart';
@@ -42,9 +43,15 @@ class _HomePageState extends State<HomePage> {
         await _onWillPop();
       },
       child: Scaffold(
-        body: IndexedStack(
-          index: _currentIndex,
-          children: _pages,
+        body: DecoratedBox(
+          // 主界面统一渐变底：三个 tab 页自身背景透明，共享这一层
+          decoration: BoxDecoration(
+            gradient: AppTheme.pageGradient(Theme.of(context).brightness),
+          ),
+          child: IndexedStack(
+            index: _currentIndex,
+            children: _pages,
+          ),
         ),
         bottomNavigationBar: Column(
           mainAxisSize: MainAxisSize.min,

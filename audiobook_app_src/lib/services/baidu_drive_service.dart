@@ -382,7 +382,8 @@ class BaiduDriveService extends ChangeNotifier implements CloudDriveService {
   }
 
   @override
-  Future<ResolvedStream> getShareAudioStreamUrl(String shareUrl, String fileId) async {
+  Future<ResolvedStream> getShareAudioStreamUrl(String shareUrl, String fileId,
+      {String? filename}) async {
     if (_cookie == null || _cookie!.isEmpty) {
       throw Exception('播放百度分享文件需要 Cookie（BDUSS）');
     }

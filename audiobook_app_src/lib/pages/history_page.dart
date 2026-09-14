@@ -21,6 +21,7 @@ class HistoryPage extends StatelessWidget {
     final sessions = sessionRepo.getAll();
 
     return Scaffold(
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
         title: const Text('收听历史'),
         actions: [

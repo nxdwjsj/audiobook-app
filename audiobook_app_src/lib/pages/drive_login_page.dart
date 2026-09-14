@@ -365,7 +365,10 @@ class _DriveCard extends StatelessWidget {
                   const SizedBox(width: 8),
                   TextButton(onPressed: onLogout, child: const Text('断开')),
                 ] else
-                  const Text('未连接', style: TextStyle(color: Colors.grey)),
+                  Text('未连接',
+                      style: TextStyle(
+                          color:
+                              Theme.of(context).colorScheme.onSurfaceVariant)),
               ],
             ),
             const SizedBox(height: 12),

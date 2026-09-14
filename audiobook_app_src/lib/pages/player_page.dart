@@ -4,6 +4,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/audio_player_service.dart';
+import '../theme/app_theme.dart';
 
 class PlayerPage extends StatelessWidget {
   const PlayerPage({super.key});
@@ -41,7 +42,16 @@ class PlayerPage extends StatelessWidget {
             ),
           ],
         ),
-        body: player.hasBook ? _buildPlayer(context, player) : const _NoBookView(),
+        // 顶栏透明 + 背景取渐变首色，body 用同色渐变衔接，视觉上是一整片
+        backgroundColor: AppTheme.pageTopColor(Theme.of(context).brightness),
+        body: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: AppTheme.pageGradient(Theme.of(context).brightness),
+          ),
+          child: player.hasBook
+              ? _buildPlayer(context, player)
+              : const _NoBookView(),
+        ),
       ),
     );
   }
@@ -141,11 +151,24 @@ class PlayerPage extends StatelessWidget {
   }
 
   Widget _buildCover(BuildContext context, String? coverUrl) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(20),
-      child: AspectRatio(
-        aspectRatio: 1,
-        child: _coverWidget(context, coverUrl),
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: scheme.shadow.withValues(alpha: 0.18),
+            blurRadius: 28,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: AspectRatio(
+          aspectRatio: 1,
+          child: _coverWidget(context, coverUrl),
+        ),
       ),
     );
   }
