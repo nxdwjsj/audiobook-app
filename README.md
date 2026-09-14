@@ -87,6 +87,29 @@ audiobook_app_src/
 | [home_page.dart](audiobook_app_src/lib/pages/home_page.dart) | 底部三 tab（书架/历史/统计）+ 手势返回联动 |
 | [stats_page.dart](audiobook_app_src/lib/pages/stats_page.dart) | 收听统计：月度方格热力图 + 总时长 + 单本时长 |
 | [throttled_navigator.dart](audiobook_app_src/lib/widgets/throttled_navigator.dart) | 跳转节流（600ms）+ 播放页单例守卫 |
+| [tool/quark_crawler.dart](audiobook_app_src/tool/quark_crawler.dart) | **夸克有声书爬虫（原型，未接入 App）**：B 站搜索发现分享 → 解析目录 → 统计音频 |
+
+### 夸克有声书爬虫（原型）
+
+独立 Dart 脚本，用来评估「自动发现网盘有声书」是否值得做进 App。复用 App 内同一套
+`sharepage/token` + `sharepage/detail` 接口，只读、可传 Cookie。
+
+```bash
+cd audiobook_app_src
+dart run tool/quark_crawler.dart --keyword 有声小说 --limit 8          # 搜索发现并解析
+dart run tool/quark_crawler.dart --links https://pan.quark.cn/s/xxx    # 只解析指定分享
+dart run tool/quark_crawler.dart --keyword 三体 --out out.json          # 导出完整 JSON
+```
+
+| 环节 | 现状 |
+|---|---|
+| 解析分享（token → 递归列目录 → 过滤音频） | ✅ 稳定可用 |
+| 发现：B 站搜索接口 | ✅ 可用（缺 `buvid3` 会 412，脚本会取 Cookie 并本地兜底） |
+| 发现：Bing/360/Sogou 结果页 | ❌ 实测基本被反爬拦掉，需 `--engine` 才启用 |
+| 非法/失效分享 | ✅ 正确报错（`41006` 分享不存在、`41010` 违规内容） |
+
+已知限制：搜索接口的 `description` 常被平台截断，所以简介没贴链接的视频会漏掉；
+命中率强依赖关键词（`<书名> 夸克` 效果最好）。
 
 ---
 
