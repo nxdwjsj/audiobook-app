@@ -33,17 +33,29 @@ class AudioPlayerService extends ChangeNotifier {
   /// 播放设置来源（跳过片头/片尾秒数）。
   StorageService? storage;
 
-  /// 已触发过片尾跳过的章节下标，保证每章只跳一次。
-  int? _outroSkippedChapterIndex;
+  /// 切章进行中。切章是异步的，期间位置事件仍停留在旧章节末尾，
+  /// 没有这层锁会连锁触发 nextChapter()，瞬间跳掉好几章并造成卡顿。
+  bool _switchingChapter = false;
 
-  /// 跳过片头秒数（0 = 不跳过）。直接查配置，避免缓存与设置不同步。
-  int get _skipIntroSeconds => storage?.getSkipIntroSeconds() ?? 0;
+  /// 跳过片头秒数（0 = 不跳过）。按当前书查询，避免缓存与设置不同步。
+  int get _skipIntroSeconds {
+    final bookId = _currentBook?.id;
+    if (bookId == null) return 0;
+    return storage?.getSkipIntroSeconds(bookId) ?? 0;
+  }
 
-  /// 跳过片尾秒数（0 = 不跳过）。
-  int get _skipOutroSeconds => storage?.getSkipOutroSeconds() ?? 0;
+  /// 跳过片尾秒数（0 = 不跳过）。按当前书查询。
+  int get _skipOutroSeconds {
+    final bookId = _currentBook?.id;
+    if (bookId == null) return 0;
+    return storage?.getSkipOutroSeconds(bookId) ?? 0;
+  }
 
   /// 上次统计打点时间；暂停时置空，避免把暂停/后台的间隔算成收听。
   DateTime? _lastStatsTick;
+
+  /// 上次已对外通知的播放位置（整秒），用于给位置更新做节流。
+  int _notifiedPositionSecond = -1;
 
   /// 尚未满 1 秒记账阈值的零头时长。
   Duration _pendingListen = Duration.zero;
@@ -82,6 +94,11 @@ class AudioPlayerService extends ChangeNotifier {
     _player.positionStream.listen((pos) {
       _tickStats();
       _maybeSkipOutro(pos);
+      // 播放页 / 迷你栏都用 context.watch 订阅本服务，若每次位置更新都通知，
+      // 会导致整页（含封面图）高频重建，表现为播放页卡顿。
+      // 进度显示精度只到秒，因此仅在整秒变化时通知。
+      if (pos.inSeconds == _notifiedPositionSecond) return;
+      _notifiedPositionSecond = pos.inSeconds;
       notifyListeners();
     });
     _player.durationStream.listen((_) => notifyListeners());
@@ -105,12 +122,16 @@ class AudioPlayerService extends ChangeNotifier {
   int get skipOutroSeconds => _skipOutroSeconds;
 
   Future<void> setSkipIntroSeconds(int seconds) async {
-    await storage?.saveSkipIntroSeconds(seconds);
+    final bookId = _currentBook?.id;
+    if (bookId == null) return;
+    await storage?.saveSkipIntroSeconds(bookId, seconds);
     notifyListeners();
   }
 
   Future<void> setSkipOutroSeconds(int seconds) async {
-    await storage?.saveSkipOutroSeconds(seconds);
+    final bookId = _currentBook?.id;
+    if (bookId == null) return;
+    await storage?.saveSkipOutroSeconds(bookId, seconds);
     notifyListeners();
   }
 
@@ -147,6 +168,7 @@ class AudioPlayerService extends ChangeNotifier {
   /// 手动切章（详情页点某一章）：同样视为一次新的收听起点。
   Future<void> jumpToChapter(int index) async {
     if (index < 0 || index >= _chapters.length) return;
+    _switchingChapter = true;
     _currentChapterIndex = index;
     await _startNewSession();
     await _loadCurrentChapter();
@@ -192,9 +214,14 @@ class AudioPlayerService extends ChangeNotifier {
     if (dur == null || dur.inMilliseconds <= 0) return;
     // 章节本身不比片尾长多少时不做判定，否则会连跳整本书
     if (dur.inSeconds <= skip + 10) return;
-    if (dur - pos > Duration(seconds: skip)) return;
-    if (_outroSkippedChapterIndex == _currentChapterIndex) return;
-    _outroSkippedChapterIndex = _currentChapterIndex;
+    // 距结尾还早：说明已落到新章节（或用户回拖），解除切章锁
+    if (dur - pos > Duration(seconds: skip)) {
+      _switchingChapter = false;
+      return;
+    }
+    // 正在切章 / 本章已跳过：直接忽略，否则会连锁触发 nextChapter()
+    if (_switchingChapter) return;
+    _switchingChapter = true;
 
     if (_currentChapterIndex < _chapters.length - 1) {
       nextChapter();
@@ -208,7 +235,8 @@ class AudioPlayerService extends ChangeNotifier {
 
     final chapter = _chapters[_currentChapterIndex];
     lastError = null;
-    _outroSkippedChapterIndex = null;
+    // 注意：这里不要清 _switchingChapter。切章期间位置事件仍停在旧章节末尾，
+    // 提前清掉会连锁触发再次跳章；该锁在落到新章节后由 _maybeSkipOutro 解除。
     debugPrint('[Player] 加载章节 ${_currentChapterIndex + 1}/${_chapters.length}: '
         '${chapter.title} (driveType=${chapter.driveType}, fileId=${chapter.fileId})');
 
@@ -292,12 +320,15 @@ class AudioPlayerService extends ChangeNotifier {
   }
 
   Future<void> seek(Duration position) async {
+    // 手动拖动进度条：解除切章锁，让片尾跳过在新位置重新参与判定
+    _switchingChapter = false;
     await _player.seek(position);
     notifyListeners();
   }
 
   Future<void> nextChapter() async {
     if (_currentChapterIndex < _chapters.length - 1) {
+      _switchingChapter = true;
       _currentChapterIndex++;
       await _loadCurrentChapter();
       await _seekToStart(Duration.zero);
@@ -308,6 +339,7 @@ class AudioPlayerService extends ChangeNotifier {
 
   Future<void> previousChapter() async {
     if (_currentChapterIndex > 0) {
+      _switchingChapter = true;
       _currentChapterIndex--;
       await _loadCurrentChapter();
       await _seekToStart(Duration.zero);

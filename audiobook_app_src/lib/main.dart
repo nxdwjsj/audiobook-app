@@ -18,6 +18,15 @@ import 'theme/app_theme.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // 框架内部异常（红屏）默认不会把堆栈打到 logcat，这里显式打出来，
+  // 否则真机上出问题只能看到红屏、拿不到堆栈。
+  FlutterError.onError = (details) {
+    debugPrint('[FlutterError] ${details.exceptionAsString()}');
+    debugPrint('[FlutterError] 上下文: ${details.context}');
+    debugPrint('[FlutterError] 堆栈:\n${details.stack}');
+    FlutterError.presentError(details);
+  };
+
   // Initialize local storage
   try {
     await StorageService.init();

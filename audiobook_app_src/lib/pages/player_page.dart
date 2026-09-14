@@ -32,7 +32,7 @@ class PlayerPage extends StatelessWidget {
                     : null,
               ),
               tooltip: '跳过片头片尾',
-              onPressed: () => _showSkipDialog(context, player),
+              onPressed: () => _showSkipSheet(context, player),
             ),
             IconButton(
               icon: const Icon(Icons.list_rounded),
@@ -371,72 +371,90 @@ class PlayerPage extends StatelessWidget {
     );
   }
 
-  /// 设置跳过片头 / 片尾秒数（0 = 不跳过）。
+  /// 设置跳过片头 / 片尾秒数（0 = 不跳过），底部半屏面板。
   /// 片头：每次开始播放章节时自动跳到该秒数。
   /// 片尾：播到距结尾不足该秒数时自动进入下一章。
-  Future<void> _showSkipDialog(
+  Future<void> _showSkipSheet(
     BuildContext context,
     AudioPlayerService player,
   ) async {
-    final introController = TextEditingController(
-      text: player.skipIntroSeconds > 0 ? '${player.skipIntroSeconds}' : '',
-    );
-    final outroController = TextEditingController(
-      text: player.skipOutroSeconds > 0 ? '${player.skipOutroSeconds}' : '',
-    );
+    // 用局部变量接住输入，控制器交给 TextFormField 自己管理：
+    // 避免外部 TextEditingController 在面板退场动画期间被提前释放。
+    var intro = player.skipIntroSeconds;
+    var outro = player.skipOutroSeconds;
 
-    await showDialog<void>(
+    await showModalBottomSheet<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('跳过片头 / 片尾'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: introController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: '跳过片头（秒）',
-                hintText: '0 = 不跳过，例如 30',
-              ),
+      // 键盘弹出时把面板顶上去，不遮挡输入框
+      isScrollControlled: true,
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // 下拉条：提示这是一块可下滑关闭的面板，而不是弹窗
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 14),
+                    decoration: BoxDecoration(
+                      color: Theme.of(ctx).colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Text('跳过片头 / 片尾',
+                    style: Theme.of(ctx).textTheme.titleMedium),
+                const SizedBox(height: 4),
+                Text(
+                  '仅对《${player.currentBook?.title ?? ''}》生效。'
+                  '章节本身比设定的跳过时长还短时不会跳过，避免连跳整本书。',
+                  style: Theme.of(ctx).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  initialValue: intro > 0 ? '$intro' : '',
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: '跳过片头（秒）',
+                    hintText: '0 = 不跳过，例如 30',
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: (v) => intro = int.tryParse(v.trim()) ?? 0,
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  initialValue: outro > 0 ? '$outro' : '',
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: '跳过片尾（秒）',
+                    hintText: '0 = 不跳过，例如 20',
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: (v) => outro = int.tryParse(v.trim()) ?? 0,
+                ),
+                const SizedBox(height: 18),
+                FilledButton(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    // 面板关闭后再改状态，避免退场动画期间触发上层重建
+                    player.setSkipIntroSeconds(intro < 0 ? 0 : intro);
+                    player.setSkipOutroSeconds(outro < 0 ? 0 : outro);
+                  },
+                  child: const Text('保存'),
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: outroController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: '跳过片尾（秒）',
-                hintText: '0 = 不跳过，例如 20',
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              '章节本身比设定的跳过时长还短时不会跳过，避免连跳整本书。',
-              style: Theme.of(ctx).textTheme.bodySmall,
-            ),
-          ],
+          ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final intro = int.tryParse(introController.text.trim()) ?? 0;
-              final outro = int.tryParse(outroController.text.trim()) ?? 0;
-              player.setSkipIntroSeconds(intro < 0 ? 0 : intro);
-              player.setSkipOutroSeconds(outro < 0 ? 0 : outro);
-              Navigator.pop(ctx);
-            },
-            child: const Text('保存'),
-          ),
-        ],
       ),
     );
-
-    introController.dispose();
-    outroController.dispose();
   }
 
   void _showCustomTimerDialog(BuildContext context, AudioPlayerService player) {

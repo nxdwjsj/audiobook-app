@@ -196,7 +196,8 @@ box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `li
   完整目录（懒加载，几千章不卡）、正在播放章节高亮、目录工具条（回顶部 / 定位正在播放 / 正倒序切换）
 - **播放**：倍速（至 3.0x）、定时关闭（含自定义分钟）、上一章/下一章、自动连播、
   下一章预加载（播到 80% 预解析）、迷你播放栏、播放页全局唯一、
-  **跳过片头/片尾**（播放页右上角设置秒数；章节本身过短时不跳，避免连跳整本书）
+  **跳过片头/片尾**（播放页右上角设置秒数，**每本书独立配置**，存 `app_config` 的
+  `skip_intro_<bookId>` / `skip_outro_<bookId>`；章节本身过短时不跳，避免连跳整本书）
 - **历史**：**会话制**——手动点播新建一条记录，自动连播只更新当前记录；
   展示开始时间、听到第几章、已听时长、百分比；单条左滑删除、一键清空；
   点击记录从**记录的章节 + 位置**续播（不是从该章开头）
@@ -238,6 +239,8 @@ box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `li
 | 连点跳多个页面 | 未走 `pushThrottled` / `pushPlayerPage` |
 | `flutter run` 频繁掉线 | MIUI 切后台导致连接断开，改用 `adb install -r` + `logcat` |
 | 选封面后没反应、封面存不下来 | 网盘书 `bookId` 含路径（`drive_quark_a/b`），直接拼文件名会因中间目录不存在导致 `copy()` 抛异常，且异步异常被静默吞掉 → 文件名前必须清洗 `\/:*?"<>|` |
+| 播放页卡顿 | `positionStream` 每次位置更新都 `notifyListeners()`，而播放页/迷你栏都 `context.watch`，导致整页（含封面图）高频重建 → 通知按**整秒节流**（进度显示精度只需到秒） |
+| 开片尾跳过后瞬间连跳好几章 | `_maybeSkipOutro` 里切章是异步的，期间位置事件仍停在旧章节末尾；而 `_loadCurrentChapter` 又把去重标记清空，于是连锁触发 `nextChapter()` → 改用 `_switchingChapter` 锁，**加载章节时不清、落到新章节（位置距结尾还早）时才解除** |
 | **代码被误删无法恢复** | 项目此前**没有 git**，删除即永久丢失 → 现已建仓，务必勤提交 |
 
 ---

@@ -89,23 +89,23 @@ class StorageService {
     return v?.toString();
   }
 
-  // --- 播放设置 ---
+  // --- 播放设置（按书独立存储）---
 
-  /// 跳过片头秒数（0 = 不跳过）。
-  Future<void> saveSkipIntroSeconds(int seconds) async {
-    await config.put('skip_intro_seconds', seconds);
+  /// 跳过片头秒数（0 = 不跳过）。每本书单独配置，互不影响。
+  Future<void> saveSkipIntroSeconds(String bookId, int seconds) async {
+    await config.put('skip_intro_$bookId', seconds);
   }
 
-  int getSkipIntroSeconds() =>
-      (config.get('skip_intro_seconds') as num?)?.toInt() ?? 0;
+  int getSkipIntroSeconds(String bookId) =>
+      (config.get('skip_intro_$bookId') as num?)?.toInt() ?? 0;
 
-  /// 跳过片尾秒数（0 = 不跳过）。
-  Future<void> saveSkipOutroSeconds(int seconds) async {
-    await config.put('skip_outro_seconds', seconds);
+  /// 跳过片尾秒数（0 = 不跳过）。每本书单独配置，互不影响。
+  Future<void> saveSkipOutroSeconds(String bookId, int seconds) async {
+    await config.put('skip_outro_$bookId', seconds);
   }
 
-  int getSkipOutroSeconds() =>
-      (config.get('skip_outro_seconds') as num?)?.toInt() ?? 0;
+  int getSkipOutroSeconds(String bookId) =>
+      (config.get('skip_outro_$bookId') as num?)?.toInt() ?? 0;
 }
 
 /// A no-op box implementation used when Hive is not available.
