@@ -10,10 +10,10 @@
 一个 Flutter 有声书播放器（主用 Android 真机），核心能力是**直接播放网盘里的音频文件夹**，把网盘文件夹当作一本书来管理（目录、进度、续播、历史）。
 
 - 应用名：`audiobook_app`，显示名「聆云」
-- 版本：`1.0.4+5`
+- 版本：`1.0.5+6`
 - 平台目录：`android/`（主力）、`ios/`、`web/`（未验证）
-- **下载安装**：[Releases · 最新版](https://github.com/nxdwjsj/audiobook-app/releases/latest) → 点 `lingyun-v1.0.4.apk` 直接下载安装（release 构建、debug 签名、通用包）
-- 仓库内另有副本：`releases/聆云_v1.0.4.apk`
+- **下载安装**：[Releases · 最新版](https://github.com/nxdwjsj/audiobook-app/releases/latest) → 点 `lingyun-v1.0.5.apk` 直接下载安装（release 构建、debug 签名、通用包；约 56MB）
+- 仓库内另有副本：`releases/lingyun-v1.0.5.apk`
 
 **技术栈**
 
@@ -210,11 +210,19 @@ box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `li
 ## 5. 已完成的功能
 
 - **书架**：本地音频导入、网盘文件夹导入（递归收集子文件夹音频，最多 5 层，自然序排列）、
-  长按移出书架 / 打开网盘文件夹、拖动排序、点击进入详情页
+  长按移出书架 / 打开网盘文件夹、拖动排序、点击进入详情页、
+  **封面右下角播放按钮**（网格）/ 标题行小播放钮（列表）——点击直接续播，不进详情页
+  （无进度从头播、正在播该书则跳播放页）
 - **书籍详情页**：封面（无封面时按书名哈希生成渐变占位图）、作者/简介、统计行、
-  完整目录（懒加载，几千章不卡）、正在播放章节高亮、目录工具条（回顶部 / 定位正在播放 / 正倒序切换）
+  完整目录（懒加载，几千章不卡；**分页显示**，每页 300 集可切页，当前播放页带 ⏵ 标记）、
+  正在播放章节高亮、目录工具条（回顶部 / 定位正在播放 / 正倒序切换，**工具条可拖动并记忆位置**）；
+  **定位采用 `GlobalKey + Scrollable.ensureVisible` 按行精确定位**（不估算行高，长书也准）
+- **悬浮播放球**（替代底部迷你播放栏）：全局挂载于 `MaterialApp.builder` 的 Overlay，
+  拖动可换左右贴边、上下调整高度并记忆位置；点击展开迷你面板
+  （封面/章节/上一章/播放/下一章/进播放页）；播放页打开时自动隐藏（`PlayerPage.isShown`）
 - **播放**：倍速（至 3.0x）、定时关闭（含自定义分钟）、上一章/下一章、自动连播、
-  下一章预加载（播到 80% 预解析）、迷你播放栏、播放页全局唯一、
+  下一章预加载（播到 80% 预解析）、**播放页目录面板**（打开即定位当前章节、每页 300 集分页）、
+  播放页全局唯一、
   **跳过片头/片尾**（播放页右上角设置秒数，**每本书独立配置**，存 `app_config` 的
   `skip_intro_<bookId>` / `skip_outro_<bookId>`；章节本身过短时不跳，避免连跳整本书）
 - **通知栏 / 锁屏播放控制**：`just_audio_background`——音频源带 `MediaItem` tag
@@ -232,7 +240,9 @@ box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `li
     结果列表里分别成条，不再把几十本混成一本书（单分享最多列 20 本）
   - **只转存选中那本**：转存时只提交该书的顶层条目（`entries`），不会把整个合集搬进网盘
   - **保存位置可选**：搜索页顶部「保存到：xxx」可浏览网盘自选目录，选择被记住，
-    默认用夸克的「来自：分享」
+    默认用夸克的「来自：分享」；保存后书籍会记录**网盘存放路径**
+    （`drivePath` + 顶层目录 `driveDirFid`），书架长按即可「打开网盘文件夹」直达，
+    顶层是散文件时退到父目录
 - **书架布局**：「⋮」→ 书架布局，可选 3 列（默认）/ 2 列 / 4 列 / 列表视图，
   列表视图为封面在左的横向卡片，选择持久化
 - **分享书播放必须转存**：夸克分享文件**没有直链**（`share/sharepage/download` 返回 404），
@@ -288,6 +298,8 @@ box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `li
 | 页面整块变成灰色空白 | 页面里用了 `context.read<X>()` 但 `X` 没注册成 Provider → 取不到就抛 `ProviderNotFoundException`，整页渲染失败。加新 Provider 后要同步在 `main.dart` 的 `MultiProvider` 里注册（`StorageService` 就是这样漏掉过） |
 | 登录页「刚打开就自动关掉」 | 别在 `onLoadStop` 里按 URL 猜登录状态：`pan.quark.cn/account/login` 未登录也会跳到首页，一读 Cookie（WebView 可能残留旧会话）就 `pop` → 现在只做文案提示，**由用户点按钮完成** |
 | 转存成功却弹「转存结果数量异常（0/1）」 | 夸克任务 done 时 `save_as_top_fids` 有时为空（转存**目录**尤其常见）→ 先复查两轮 task，仍为空就列目标目录按名字 + 类型回查新 fid |
+| 目录定位不准（定位到半截/错行） | 按「行高 64px × index」估算偏移在 dense + 单双行混排时不准 → 改 `GlobalKey` 标记行 + `Scrollable.ensureVisible` 精确定位；长书先切到所在分页再等一帧定位 |
+| 书架封面播放按钮点击穿透进详情页 | 内层 `GestureDetector` 默认 `deferToChild`，tap 被外层 `InkWell` 赢走 → 设 `behavior: HitTestBehavior.opaque` 让内层赢得手势竞技场 |
 
 ---
 
