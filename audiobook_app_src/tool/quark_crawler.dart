@@ -426,7 +426,20 @@ class Discovery {
     }
     await _sleep(600);
 
-    // 5) 搜索引擎：默认关闭（反爬严重、命中率低），用 --engine 打开。
+    // 5) 放空一夏 fangkong.cc：广播剧/有声书全文检索，搜索页直接含夸克链接
+    print('  [发现] 渠道: fangkong.cc 站内搜索');
+    try {
+      final links = await _fangkong(keyword);
+      for (final l in links) {
+        found.putIfAbsent(l.pwdId, () => l);
+      }
+      print('    「$keyword」 → ${links.length} 条');
+    } catch (e) {
+      print('    「$keyword」 失败: $e');
+    }
+    await _sleep(600);
+
+    // 6) 搜索引擎：默认关闭（反爬严重、命中率低），用 --engine 打开。
     if (!withEngine) return found.values.toList();
 
     print('  [发现] 渠道: 搜索引擎（可能被反爬）');
@@ -668,6 +681,14 @@ class Discovery {
     return out;
   }
 
+  /// 放空一夏（fangkong.cc）：广播剧/有声书全文检索站，
+  /// 搜索页 /s/<关键词>.html 的 HTML 里直接带 pan.quark.cn 链接，无需再进详情页。
+  Future<List<ShareLink>> _fangkong(String keyword) async {
+    final kw = Uri.encodeComponent(keyword);
+    final html = await _text('https://fangkong.cc/s/$kw.html');
+    return _extract(html, 'fangkong');
+  }
+
   /// 直接抓任意页面里的夸克链接（--pages）：用于临时接入新的聚合站，
   /// 不需要为每个站单独写适配器。不做关键词过滤——页面由调用者自行挑选。
   Future<List<ShareLink>> pages(List<String> urls) async {
@@ -854,6 +875,15 @@ Future<void> main(List<String> args) async {
     unique.putIfAbsent(l.pwdId, () => l);
   }
   var targets = unique.values.toList();
+  // 策展类渠道（站内搜索/合集页）精度远高于 B 站简介里的链接，
+  // 优先解析，否则会被 --limit 按发现顺序截掉。组内保持原顺序。
+  const priority = {'fangkong': 0, 'yigushi': 0, 'slowread': 0, 'yangzhiyi': 0, 'page': 0};
+  final indexed = [for (var i = 0; i < targets.length; i++) (i, targets[i])];
+  indexed.sort((a, b) {
+    final c = (priority[a.$2.source] ?? 1).compareTo(priority[b.$2.source] ?? 1);
+    return c != 0 ? c : a.$1.compareTo(b.$1);
+  });
+  targets = [for (final e in indexed) e.$2];
   if (targets.length > limit) targets = targets.sublist(0, limit);
 
   print('\n== 解析阶段: 共 ${targets.length} 个分享 ==');

@@ -112,9 +112,13 @@ dart run tool/quark_crawler.dart --pages https://xxx/list.html           # 直�
 | 发现：第一故事 yigushi.com 站内搜索 | ✅ 可用且命中率高（Destoon CMS，`/<模块>/search.php?kw=`；文章页正文直接贴夸克链接；按 token 分词搜「有声小说/评书/戏曲/儿童」四板块） |
 | 发现：Mp3故事网 mp3.yangzhiyi.com 站内搜索 | ✅ 可用（Z-Blog CMS，POST `/zb_system/cmd.php?act=search`；该站搜索会匹配简介，故只认标题命中的条目） |
 | 发现：slowread.net 有声书合集页 | ✅ 可用（静态大列表，`<span>标题</span>` 紧跟夸克链接，成对抽取、无需搜索与文章页） |
+| 发现：放空一夏 fangkong.cc 站内搜索 | ✅ 可用（广播剧/有声书全文检索，`/s/<关键词>.html` 搜索页 HTML 直接带夸克链接；另有 `-1-9` 等分类路由） |
 | 发现：`--pages` 任意页面直抓 | ✅ 可用（不做关键词过滤，页面由调用者挑；实测单页可抽 690 条链接，适合临时接入新聚合站） |
 | 发现：Bing/360/Sogou 结果页 | ❌ 实测基本被反爬拦掉，需 `--engine` 才启用 |
 | 非法/失效分享 | ✅ 正确报错（`41006` 分享不存在、`41010` 违规内容、`41031` 分享者被封禁） |
+
+解析顺序：策展类渠道（fangkong / yigushi / slowread / yangzhiyi / `--pages`）的链接优先于
+B 站简介链接解析，避免 `--limit` 把高精度结果截掉（实测「神秘复苏」6/6 全命中）。
 
 已知限制：搜索接口的 `description` 常被平台截断，所以简介没贴链接的视频会漏掉；
 命中率强依赖关键词（`<书名> 夸克` 效果最好）。B 站渠道对「书名+平台名」（如
