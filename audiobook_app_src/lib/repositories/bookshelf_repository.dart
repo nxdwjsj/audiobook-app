@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 
 import '../models/bookshelf_book.dart';
@@ -56,9 +58,26 @@ class BookshelfRepository extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 移出书架：同时删除自定义封面文件，避免残留孤儿文件越积越多。
   Future<void> remove(String id) async {
+    await _deleteCoverFile(id);
     await _storage.bookshelf.delete(id);
     notifyListeners();
+  }
+
+  /// 删除某本书的自定义封面文件（文件不存在或非本 App 目录时静默跳过）。
+  Future<void> _deleteCoverFile(String id) async {
+    try {
+      final v = _storage.bookshelf.get(id);
+      if (v == null) return;
+      final book = BookshelfBook.fromJson(Map<String, dynamic>.from(v as Map));
+      final path = book.localCoverPath;
+      if (path == null || path.isEmpty) return;
+      final file = File(path);
+      if (await file.exists()) await file.delete();
+    } catch (e) {
+      debugPrint('[Bookshelf] 删除封面失败: $e');
+    }
   }
 
   bool isInShelf(String id) {
