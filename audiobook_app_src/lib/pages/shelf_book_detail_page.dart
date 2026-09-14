@@ -10,6 +10,7 @@ import '../models/playback_progress.dart';
 import '../repositories/bookshelf_repository.dart';
 import '../repositories/progress_repository.dart';
 import '../services/audio_player_service.dart';
+import '../widgets/mini_player.dart';
 import '../widgets/throttled_navigator.dart';
 import 'drive_browser_page.dart';
 import 'edit_book_info_page.dart';
@@ -349,6 +350,10 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
 
   Widget _buildBottomBar(BuildContext context, bool isCurrent,
       AudioPlayerService player, PlaybackProgress? progress) {
+    // 正在播放本书：底部显示迷你播放栏，可在详情页直接暂停/切章/进入播放页。
+    if (isCurrent) {
+      return const SafeArea(child: MiniPlayer());
+    }
     final startChapter = progress?.chapterIndex ?? 0;
     final positionSeconds = progress?.positionSeconds ?? 0;
     final label = progress != null ? '继续播放' : '开始播放';
