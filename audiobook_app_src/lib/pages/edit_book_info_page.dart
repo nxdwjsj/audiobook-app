@@ -50,8 +50,14 @@ class _EditBookInfoPageState extends State<EditBookInfoPage> {
       await coversDir.create(recursive: true);
     }
     final ext = src.path.contains('.') ? src.path.split('.').last : 'jpg';
+    // 网盘书的 bookId 含路径（如 drive_quark_a/b），需清洗分隔符再做文件名，
+    // 否则会因中间目录不存在导致复制失败、封面静默丢失
+    final safeId = widget.bookId
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+        .replaceAll(RegExp(r'\s+'), '_');
+    final shortId = safeId.length > 60 ? safeId.substring(0, 60) : safeId;
     final dst = File(
-        '${coversDir.path}/${widget.bookId}_${DateTime.now().millisecondsSinceEpoch}.$ext');
+        '${coversDir.path}/${shortId}_${DateTime.now().millisecondsSinceEpoch}.$ext');
     await src.copy(dst.path);
     // 清理旧封面
     if (_coverPath != null && _coverPath!.startsWith(coversDir.path)) {
