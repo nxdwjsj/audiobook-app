@@ -16,6 +16,7 @@ import 'services/cloud_drive_service.dart';
 import 'services/resource_search_service.dart';
 import 'services/storage_service.dart';
 import 'theme/app_theme.dart';
+import 'widgets/floating_player_ball.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -137,6 +138,14 @@ class AudiobookApp extends StatelessWidget {
       darkTheme: AppTheme.darkTheme(),
       themeMode: ThemeMode.system,
       home: const HomePage(),
+      // 全局悬浮播放球：盖在所有路由（含底部导航栏）之上，
+      // 播放页打开或无正在播放的书时自动隐藏。
+      builder: (context, child) => Stack(
+        children: [
+          child ?? const SizedBox.shrink(),
+          const FloatingPlayerBall(),
+        ],
+      ),
     );
   }
 }

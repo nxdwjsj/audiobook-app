@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../theme/app_theme.dart';
-import '../widgets/mini_player.dart';
 import 'bookshelf_page.dart';
 import 'history_page.dart';
 import 'stats_page.dart';
@@ -53,32 +52,28 @@ class _HomePageState extends State<HomePage> {
             children: _pages,
           ),
         ),
-        bottomNavigationBar: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const MiniPlayer(),
-            NavigationBar(
-              selectedIndex: _currentIndex,
-              onDestinationSelected: (index) {
-                setState(() => _currentIndex = index);
-              },
-              destinations: const [
-                NavigationDestination(
-                  icon: Icon(Icons.library_books_outlined),
-                  selectedIcon: Icon(Icons.library_books_rounded),
-                  label: '书架',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.history_rounded),
-                  selectedIcon: Icon(Icons.history_rounded),
-                  label: '历史',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.insights_outlined),
-                  selectedIcon: Icon(Icons.insights_rounded),
-                  label: '统计',
-                ),
-              ],
+        // 底部播放栏已改为全局悬浮球（main.dart MaterialApp.builder 挂载），
+        // 这里只保留导航栏。
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: _currentIndex,
+          onDestinationSelected: (index) {
+            setState(() => _currentIndex = index);
+          },
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.library_books_outlined),
+              selectedIcon: Icon(Icons.library_books_rounded),
+              label: '书架',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.history_rounded),
+              selectedIcon: Icon(Icons.history_rounded),
+              label: '历史',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.insights_outlined),
+              selectedIcon: Icon(Icons.insights_rounded),
+              label: '统计',
             ),
           ],
         ),

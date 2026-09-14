@@ -29,7 +29,12 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
 
   /// 转存目标目录。null = 用夸克的「来自：分享」目录
   String? _saveDirFid;
+
+  /// 目标目录显示名（如「来自：分享」「小说」）
   String _saveDirName = '来自：分享';
+
+  /// 目标目录的绝对路径（'' = 根目录）。用于拼书的存放路径。
+  String _absoluteSavePath = '';
 
   @override
   void initState() {
@@ -37,6 +42,10 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
     final storage = context.read<StorageService>();
     _saveDirFid = storage.getQuarkSaveDirFid();
     _saveDirName = storage.getQuarkSaveDirName() ?? '来自：分享';
+    final storedPath = storage.getQuarkSaveDirPath();
+    _absoluteSavePath = (storedPath == null || storedPath == '根目录')
+        ? ''
+        : (storedPath.startsWith('/') ? storedPath : '/$storedPath');
   }
 
   @override
@@ -55,11 +64,20 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
     );
     if (picked == null || !mounted) return;
     final storage = context.read<StorageService>();
-    await storage.saveQuarkSaveDir(picked.$1, picked.$2);
+    // picked: (fid, 绝对路径)。'' = 默认「来自：分享」，'/' = 根目录。
+    final isDefaultInbox = picked.$1.isEmpty && picked.$2.isEmpty;
+    final absPath = isDefaultInbox
+        ? ''
+        : (picked.$2 == '/' ? '' : '/${picked.$2.replaceAll(RegExp(r'^/+|/+$'), '')}');
+    final displayName = isDefaultInbox
+        ? '来自：分享'
+        : (absPath.isEmpty ? '根目录' : absPath.split('/').last);
+    await storage.saveQuarkSaveDir(picked.$1, displayName, absPath);
     if (!mounted) return;
     setState(() {
       _saveDirFid = picked.$1.isEmpty ? null : picked.$1;
-      _saveDirName = picked.$2;
+      _saveDirName = displayName;
+      _absoluteSavePath = absPath;
     });
   }
 
@@ -138,10 +156,10 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
       final quark = context.read<QuarkDriveService>();
 
       setState(() => _progress = '正在转存「${r.title}」到「$_saveDirName」…');
-      List<DriveItem> saved;
+      SaveShareResult savedResult;
       try {
         // 只转存这一本书（entries = 该书的顶层条目），而不是整个合集
-        saved = await quark.saveShareToMyDrive(
+        savedResult = await quark.saveShareToMyDrive(
           r.shareUrl,
           pwd: r.passcode,
           entries: r.shareEntries,
@@ -153,6 +171,7 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
         return false;
       }
       if (mounted) setState(() => _progress = null);
+      final saved = savedResult.audioFiles;
       if (saved.isEmpty) {
         messenger.showSnackBar(const SnackBar(content: Text('该分享里没有可播放的音频文件')));
         return false;
@@ -165,6 +184,22 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
         driveType: DriveType.quark,
         bookId: _bookIdFor(r),
       );
+      // 记录这本书在网盘里的存放位置，书架长按即可跳进去。
+      // 顶层是目录 → 用转存后的目录 fid；顶层是散文件 → 只能到所在目录。
+      // 默认「来自：分享」没有 fid（由夸克自动定位），按名字也能被网盘页解析。
+      final rawParent = _absoluteSavePath;
+      final parentPath = rawParent == '/' ? '' : rawParent;
+      final fallbackParent = parentPath.isNotEmpty
+          ? parentPath
+          : (_saveDirFid == null ? '/来自：分享' : '/');
+      final bookDirFid = savedResult.savedDirFid ?? _saveDirFid;
+      final String? bookDirPath;
+      if (savedResult.savedDirName != null) {
+        bookDirPath =
+            parentPath.isEmpty ? '/${savedResult.savedDirName}' : '$parentPath/${savedResult.savedDirName}';
+      } else {
+        bookDirPath = fallbackParent;
+      }
       await repo.add(BookshelfBook(
         id: book.id,
         title: book.title,
@@ -173,6 +208,8 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
         driveType: DriveType.quark,
         isFromShare: false,
         shareUrl: r.shareUrl,
+        driveDirFid: bookDirFid,
+        drivePath: bookDirPath,
         chapters: book.chapters,
       ));
       if (play) {
@@ -401,6 +438,9 @@ class _SaveDirPickerState extends State<_SaveDirPicker> {
   String get _pathLabel =>
       _stack.isEmpty ? '根目录' : _stack.map((e) => e.$2).join(' / ');
 
+  /// 当前目录在网盘里的绝对路径（如 /有声书/小说），根目录为 ''。
+  String get _absolutePath => _stack.map((e) => e.$2).join('/');
+
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -492,7 +532,7 @@ class _SaveDirPickerState extends State<_SaveDirPicker> {
                       icon: const Icon(Icons.inbox_rounded, size: 18),
                       label: const Text('用「来自：分享」（默认）'),
                       onPressed: () =>
-                          Navigator.pop(context, ('', '来自：分享')),
+                          Navigator.pop(context, ('', '')),
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -502,7 +542,7 @@ class _SaveDirPickerState extends State<_SaveDirPicker> {
                       icon: const Icon(Icons.check_rounded, size: 18),
                       label: Text('保存到「$_pathLabel」'),
                       onPressed: () =>
-                          Navigator.pop(context, (fid, _pathLabel)),
+                          Navigator.pop(context, (fid, _absolutePath)),
                     ),
                   ),
                 ],

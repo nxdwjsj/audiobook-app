@@ -3,7 +3,9 @@ import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../models/book.dart';
 import '../models/bookshelf_book.dart';
+import '../models/chapter.dart';
 import '../models/drive_item.dart';
 import '../repositories/bookshelf_repository.dart';
 import '../repositories/progress_repository.dart';
@@ -289,13 +291,20 @@ class _EmptyBookshelf extends StatelessWidget {
   }
 }
 
-class _BookshelfItem extends StatelessWidget {
+class _BookshelfItem extends StatefulWidget {
   final BookshelfBook book;
 
   /// 列表视图：封面在左的横向布局
   final bool compact;
 
   const _BookshelfItem({required this.book, this.compact = false});
+
+  @override
+  State<_BookshelfItem> createState() => _BookshelfItemState();
+}
+
+class _BookshelfItemState extends State<_BookshelfItem> {
+  BookshelfBook get book => widget.book;
 
   /// 封面：本地图 → 网络图 → 首字占位图
   Widget _cover({double placeholderFontSize = 44}) {
@@ -342,6 +351,73 @@ class _BookshelfItem extends StatelessWidget {
     }
   }
 
+  /// 封面上的快速播放按钮：点击直接续播，不进详情页。
+  /// 无进度时从头播放。
+  Widget _quickPlayButton(BuildContext context, {bool small = false}) {
+    final scheme = Theme.of(context).colorScheme;
+    final size = small ? 26.0 : 32.0;
+    return GestureDetector(
+      // 内层手势赢得竞技场，点击不会透传到外层 InkWell（进详情页）
+      behavior: HitTestBehavior.opaque,
+      onTap: () => _quickPlay(context),
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: scheme.primary.withValues(alpha: 0.92),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.3),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Icon(
+          Icons.play_arrow_rounded,
+          size: size,
+          color: scheme.onPrimary,
+        ),
+      ),
+    );
+  }
+
+  /// 快速播放：直接续播（有进度从进度处播，无进度从头播），
+  /// 不跳转播放页 —— 浮球会同步展示播放状态。
+  Future<void> _quickPlay(BuildContext context) async {
+    final player = context.read<AudioPlayerService>();
+    if (player.hasBook && player.currentBook!.id == book.id) {
+      // 正在播这本书：直接进播放页
+      if (context.mounted) context.pushPlayerPage();
+      return;
+    }
+    final chapters = book.chapters ?? const <Chapter>[];
+    if (chapters.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('这本书没有章节信息，请先进入详情页刷新')),
+      );
+      return;
+    }
+    final playBook = Book(
+      id: book.id,
+      title: book.title,
+      author: book.author,
+      description: book.description,
+      coverUrl: book.localCoverPath ?? book.coverUrl,
+      chapters: chapters,
+    );
+    try {
+      await player.resumeFromProgress(playBook);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('播放失败：$e')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final progressRepo = context.watch<ProgressRepository>();
@@ -353,7 +429,7 @@ class _BookshelfItem extends StatelessWidget {
     }
     final badge = _sourceBadge(context);
 
-    if (compact) return _buildCompact(context, progressPercent, badge);
+    if (widget.compact) return _buildCompact(context, progressPercent, badge);
 
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -395,6 +471,12 @@ class _BookshelfItem extends StatelessWidget {
                         ],
                       ),
                     ),
+                  ),
+                  // 快速播放按钮：封面右下角
+                  Positioned(
+                    right: 6,
+                    bottom: 6,
+                    child: _quickPlayButton(context),
                   ),
                 ],
               ),
@@ -537,12 +619,20 @@ class _BookshelfItem extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      book.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w600, fontSize: 14.5),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            book.title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w600, fontSize: 14.5),
+                          ),
+                        ),
+                        // 快速播放按钮：标题右侧
+                        _quickPlayButton(context, small: true),
+                      ],
                     ),
                     const SizedBox(height: 6),
                     Row(

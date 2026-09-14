@@ -10,8 +10,8 @@ import '../models/playback_progress.dart';
 import '../repositories/bookshelf_repository.dart';
 import '../repositories/progress_repository.dart';
 import '../services/audio_player_service.dart';
+import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
-import '../widgets/mini_player.dart';
 import '../widgets/throttled_navigator.dart';
 import 'drive_browser_page.dart';
 import 'edit_book_info_page.dart';
@@ -34,6 +34,16 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
   /// 目录排序：false = 正序（第 1 集在上），true = 倒序（最新在上）。
   bool _descending = false;
 
+  /// 目录分页：每页 300 集，长书不用滑几千行。
+  static const int _pageSize = 300;
+  int _page = 0;
+
+  /// 浮动工具条位置（null = 默认右下角）。拖动后持久化。
+  Offset? _toolbarOffset;
+
+  /// 行 key：分页 + 精确定位都靠它做 ensureVisible。
+  final Map<int, GlobalKey> _chapterRowKeys = {};
+
   /// 实时从书架读取最新数据（编辑信息、进度缓存变化后立即同步）。
   BookshelfBook get _book =>
       context.read<BookshelfRepository>().getById(widget.book.id) ??
@@ -42,6 +52,7 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
   @override
   void initState() {
     super.initState();
+    _toolbarOffset = context.read<StorageService>().getChapterToolbarOffset();
     // 章节列表渲染后定位到正在播放的章节
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToPlaying());
   }
@@ -52,37 +63,96 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
     super.dispose();
   }
 
-  /// 定位到正在播放章节（首次进入自动执行；工具条按钮可强制触发）。
-  void _scrollToPlaying({bool force = false}) {
-    if (!force && (_scrolledToPlaying || !mounted)) return;
-    final player = context.read<AudioPlayerService>();
-    if (!player.hasBook || player.currentBook!.id != widget.book.id) return;
-    final chapters = _chapters;
-    if (chapters.isEmpty) return;
-    final index = player.currentChapterIndex;
-    if (!force && index <= 0) {
-      _scrolledToPlaying = true;
-      return;
-    }
-    // 估算行高定位（ListTile dense + subtitle 约 64px）
-    final row = _descending ? chapters.length - 1 - index : index;
-    final target = (row * 64.0).clamp(0.0, double.maxFinite);
-    _scrolledToPlaying = true;
-    if (_scrollController.hasClients) {
-      _scrollController.animateTo(
-        target,
-        duration: const Duration(milliseconds: 400),
-        curve: Curves.easeOutCubic,
-      );
-    }
-  }
-
+  int get _pageCount => (_chapters.length / _pageSize).ceil().clamp(1, 99999);
 
   List<Chapter> get _chapters => _book.chapters ?? const [];
 
-  /// 渲染用章节列表（含排序）。
-  List<Chapter> get _displayChapters =>
-      _descending ? _chapters.reversed.toList() : _chapters;
+  /// 当前页要显示的章节（已应用排序）。
+  List<Chapter> get _displayChapters {
+    final all = _descending ? _chapters.reversed.toList() : _chapters;
+    final start = (_page * _pageSize).clamp(0, all.length);
+    final end = ((_page + 1) * _pageSize).clamp(0, all.length);
+    return all.sublist(start, end);
+  }
+
+  /// 当前播放章节（或进度章节）落在第几页。
+  int get _playingPageIndex {
+    final player = context.read<AudioPlayerService>();
+    var index = 0;
+    if (player.hasBook && player.currentBook!.id == _book.id) {
+      index = player.currentChapterIndex;
+    } else {
+      final progress = context.read<ProgressRepository>().getProgress(_book.id);
+      index = progress?.chapterIndex ?? 0;
+    }
+    if (index < 0) index = 0;
+    if (_chapters.isNotEmpty && index >= _chapters.length) {
+      index = _chapters.length - 1;
+    }
+    return (index / _pageSize).floor();
+  }
+
+  /// 定位到正在播放章节（首次进入自动执行；工具条按钮可强制触发）。
+  /// 分页视图：切到所在页，再用 ensureVisible 滚到该行（不估算行高）。
+  void _scrollToPlaying({bool force = false}) {
+    if (!mounted) return;
+    if (!force && _scrolledToPlaying) return;
+    final player = context.read<AudioPlayerService>();
+    if (!player.hasBook || player.currentBook!.id != widget.book.id) {
+      return;
+    }
+    final index = player.currentChapterIndex;
+    _scrolledToPlaying = true;
+    if (index < 0 || _chapters.isEmpty || index >= _chapters.length) return;
+
+    final targetPage = (index / _pageSize).floor();
+    void locateRow() {
+      final key = _chapterRowKeys[index];
+      final ctx = key?.currentContext;
+      if (ctx != null) {
+        Scrollable.ensureVisible(
+          ctx,
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeOutCubic,
+          alignment: 0.4,
+        );
+      }
+    }
+
+    if (targetPage != _page) {
+      setState(() => _page = targetPage);
+      // 切页后行还没构建，等一帧再定位
+      WidgetsBinding.instance.addPostFrameCallback((_) => locateRow());
+    } else {
+      locateRow();
+    }
+  }
+
+  /// 拖动工具条：onPanUpdate 累计偏移，出界会被 LayoutBuilder 夹紧。
+  void _onToolbarPan(DragUpdateDetails d, BoxConstraints constraints) {
+    setState(() {
+      final size = MediaQuery.of(context).size;
+      const half = 70.0; // 工具条半宽（约）
+      var dx = (_toolbarOffset ?? _defaultToolbarOffset()).dx + d.delta.dx;
+      var dy = (_toolbarOffset ?? _defaultToolbarOffset()).dy + d.delta.dy;
+      dx = dx.clamp(0.0, (size.width - half * 2).clamp(0.0, double.infinity));
+      dy = dy.clamp(0.0, (size.height - 120).clamp(0.0, double.infinity));
+      _toolbarOffset = Offset(dx, dy);
+    });
+  }
+
+  /// 默认工具条位置：右下角（16, 屏高 - 200）。
+  Offset _defaultToolbarOffset() {
+    final size = MediaQuery.of(context).size;
+    return Offset(size.width - 160, size.height - 200);
+  }
+
+  Future<void> _persistToolbar() async {
+    if (_toolbarOffset == null) return;
+    await context
+        .read<StorageService>()
+        .saveChapterToolbarOffset(_toolbarOffset!);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -141,74 +211,86 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
   Widget _buildBody(BuildContext context, bool isCurrent,
       AudioPlayerService player, PlaybackProgress? progress) {
     final chapters = _displayChapters;
-    // 头部信息（封面/简介/统计）+ 章节列表放在同一个懒加载列表里，
-    // 3384 章也只构建屏幕内可见的行，不卡顿。
-    const headerCount = 3; // header + stats + 目录标题
-    return Stack(
-      children: [
-        ListView.builder(
-          controller: _scrollController,
-          // 底部留出浮动按钮组的空间，避免最后一行被遮挡
-          padding: const EdgeInsets.only(bottom: 80),
-          itemCount: headerCount + chapters.length,
-          itemBuilder: (context, index) {
-            if (index == 0) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildHeader(context),
-                  if (_book.description != null && _book.description!.isNotEmpty)
-                    _buildDescription(context),
-                ],
-              );
-            }
-            if (index == 1) return _buildStatsRow(context, progress);
-            if (index == 2) return _buildChapterTitle(context, chapters.length);
-            final chapterIndex = _descending
-                ? _chapters.length - 1 - (index - headerCount)
-                : index - headerCount;
-            final chapter = chapters[index - headerCount];
-            final isPlayingChapter =
-                isCurrent && chapterIndex == player.currentChapterIndex;
-            return ListTile(
-              dense: true,
-              leading: isPlayingChapter
-                  ? Icon(Icons.graphic_eq_rounded,
-                      color: Theme.of(context).colorScheme.primary)
-                  : Text('${chapterIndex + 1}'),
-              title: Text(
-                chapter.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontWeight:
-                      isPlayingChapter ? FontWeight.bold : FontWeight.normal,
-                  color: isPlayingChapter
-                      ? Theme.of(context).colorScheme.primary
-                      : null,
+    // 头部信息（封面/简介）+ 统计 + 目录标题（+分页条）+ 当前页章节行
+    const headerCount = 4; // header + stats + 目录标题 + 分页条
+    return LayoutBuilder(builder: (context, constraints) {
+      return Stack(
+        children: [
+          ListView.builder(
+            controller: _scrollController,
+            // 底部留出浮动按钮组的空间，避免最后一行被遮挡
+            padding: const EdgeInsets.only(bottom: 80),
+            itemCount: headerCount + chapters.length,
+            itemBuilder: (context, index) {
+              if (index == 0) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildHeader(context),
+                    if (_book.description != null &&
+                        _book.description!.isNotEmpty)
+                      _buildDescription(context),
+                  ],
+                );
+              }
+              if (index == 1) return _buildStatsRow(context, progress);
+              if (index == 2) return _buildChapterTitle(context, _chapters.length);
+              if (index == 3) return _buildPageSelector(context);
+              final rowIndex = index - headerCount;
+              // 当前页数据已应用排序，映射回真实章节下标
+              final pageStart = _page * _pageSize;
+              final chapterIndex = _descending
+                  ? _chapters.length - 1 - (pageStart + rowIndex)
+                  : pageStart + rowIndex;
+              final chapter = chapters[rowIndex];
+              final isPlayingChapter =
+                  isCurrent && chapterIndex == player.currentChapterIndex;
+              return ListTile(
+                key: _chapterRowKeys[chapterIndex] ??= GlobalKey(),
+                dense: true,
+                leading: isPlayingChapter
+                    ? Icon(Icons.graphic_eq_rounded,
+                        color: Theme.of(context).colorScheme.primary)
+                    : Text('${chapterIndex + 1}'),
+                title: Text(
+                  chapter.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontWeight:
+                        isPlayingChapter ? FontWeight.bold : FontWeight.normal,
+                    color: isPlayingChapter
+                        ? Theme.of(context).colorScheme.primary
+                        : null,
+                  ),
                 ),
-              ),
-              trailing: isPlayingChapter
-                  ? Text(
-                      '正在播放',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                    )
-                  : null,
-              onTap: () => _playChapter(context, chapterIndex),
-            );
-          },
-        ),
-        // 浮动目录工具条：回顶部 / 定位正在播放 / 正倒序切换，列表任意位置可用
-        Positioned(
-          right: 16,
-          bottom: 16,
-          child: _buildFloatingChapterToolbar(context, chapters.length),
-        ),
-      ],
-    );
+                trailing: isPlayingChapter
+                    ? Text(
+                        '正在播放',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      )
+                    : null,
+                onTap: () => _playChapter(context, chapterIndex),
+              );
+            },
+          ),
+          // 浮动目录工具条：可拖到任意位置（松手持久化），默认右下角
+          Positioned(
+            left: (_toolbarOffset ?? _defaultToolbarOffset()).dx,
+            top: (_toolbarOffset ?? _defaultToolbarOffset()).dy,
+            child: GestureDetector(
+              // 拖动本体 = 移动工具条；按钮点击不受影响（子级手势优先）
+              onPanUpdate: (d) => _onToolbarPan(d, constraints),
+              onPanEnd: (_) => _persistToolbar(),
+              child: _buildFloatingChapterToolbar(context, _chapters.length),
+            ),
+          ),
+        ],
+      );
+    });
   }
 
   /// 目录标题行（仅标题，按钮在浮动工具条上）。
@@ -220,6 +302,38 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
         style: Theme.of(context).textTheme.titleMedium?.copyWith(
               fontWeight: FontWeight.bold,
             ),
+      ),
+    );
+  }
+
+  /// 分页条：1-300 / 301-600 / …，点击切换当前显示的章节区间。
+  Widget _buildPageSelector(BuildContext context) {
+    if (_pageCount <= 1) return const SizedBox.shrink();
+    return SizedBox(
+      height: 44,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        itemCount: _pageCount,
+        itemBuilder: (ctx, i) {
+          final s = i * _pageSize + 1;
+          final e = ((i + 1) * _pageSize).clamp(0, _chapters.length);
+          final selected = i == _page;
+          final isPlayingPage = i == _playingPageIndex;
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: ChoiceChip(
+              label: Text(
+                '$s-$e${isPlayingPage && !selected ? ' ⏵' : ''}',
+              ),
+              selected: selected,
+              onSelected: (_) => setState(() {
+                _page = i;
+                _scrolledToPlaying = true; // 手动切页后不再自动定位
+              }),
+            ),
+          );
+        },
       ),
     );
   }
@@ -378,9 +492,19 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
 
   Widget _buildBottomBar(BuildContext context, bool isCurrent,
       AudioPlayerService player, PlaybackProgress? progress) {
-    // 正在播放本书：底部显示迷你播放栏，可在详情页直接暂停/切章/进入播放页。
+    // 底部播放栏已改为全局悬浮球。正在播放本书时不再占底部空间，
+    // 只保留「继续/开始播放」按钮（已在播时点击无操作，避免打断）。
     if (isCurrent) {
-      return const SafeArea(child: MiniPlayer());
+      return SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          child: FilledButton.icon(
+            onPressed: () => context.pushPlayerPage(),
+            icon: const Icon(Icons.equalizer_rounded),
+            label: const Text('正在播放 · 打开播放页'),
+          ),
+        ),
+      );
     }
     final startChapter = progress?.chapterIndex ?? 0;
     final positionSeconds = progress?.positionSeconds ?? 0;

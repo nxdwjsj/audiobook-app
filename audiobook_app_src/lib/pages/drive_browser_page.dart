@@ -91,10 +91,12 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
   @override
   void initState() {
     super.initState();
-    if (widget.initialDirFid != null) {
+    if (widget.initialDirFid != null && widget.initialPath != null) {
       _pathFid[widget.initialPath!] = widget.initialDirFid!;
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadFolder());
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _loadFolder(dirFileId: widget.initialDirFid),
+    );
   }
 
   Future<void> _loadFolder({String? path, String? dirFileId}) async {

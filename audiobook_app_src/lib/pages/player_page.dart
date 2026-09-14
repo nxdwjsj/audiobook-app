@@ -4,6 +4,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
+import '../models/book.dart';
 import '../services/audio_player_service.dart';
 import '../theme/app_theme.dart';
 
@@ -533,52 +534,222 @@ class PlayerPage extends StatelessWidget {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (ctx) => DraggableScrollableSheet(
-        initialChildSize: 0.7,
-        maxChildSize: 0.9,
-        expand: false,
-        builder: (ctx, scrollController) => ListView.builder(
-          controller: scrollController,
-          itemCount: book.chapters.length,
-          itemBuilder: (ctx, index) {
-            final chapter = book.chapters[index];
-            final isCurrent = index == player.currentChapterIndex;
-            return ListTile(
-              leading: isCurrent
-                  ? Icon(Icons.play_arrow_rounded,
-                      color: Theme.of(context).colorScheme.primary)
-                  : Text('${index + 1}'),
-              title: Text(
-                chapter.title,
-                style: TextStyle(
-                  fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
-                  color: isCurrent
-                      ? Theme.of(context).colorScheme.primary
-                      : null,
-                ),
-              ),
-              subtitle: Text(_formatDuration(chapter.duration)),
-              onTap: () {
-                player.jumpToChapter(index);
-                Navigator.pop(ctx);
-              },
-            );
-          },
-        ),
-      ),
+      builder: (ctx) => _ChapterSheet(book: book, player: player),
     );
   }
 
-  String _formatDuration(Duration duration) {
-    if (duration.inMinutes < 60) {
-      final m = duration.inMinutes;
-      final s = duration.inSeconds % 60;
-      return '$m:${s.toString().padLeft(2, '0')}';
-    }
-    final h = duration.inHours;
-    final m = duration.inMinutes % 60;
+}
+
+String _formatDuration(Duration duration) {
+  if (duration.inMinutes < 60) {
+    final m = duration.inMinutes;
     final s = duration.inSeconds % 60;
-    return '$h:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+    return '$m:${s.toString().padLeft(2, '0')}';
+  }
+  final h = duration.inHours;
+  final m = duration.inMinutes % 60;
+  final s = duration.inSeconds % 60;
+  return '$h:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+}
+
+/// 章节面板（播放页）：分页浏览 + 打开即定位到正在播放的章节。
+///
+/// 每页 [pageSize] 集，横排页码 chips（如 1-300、301-600）；
+/// 打开时自动切到当前播放章节所在页，并用 ensureVisible 精确滚到该行
+/// （不再用估算行高，长章节名/短章节名混排也能定位准确）。
+class _ChapterSheet extends StatefulWidget {
+  final Book book;
+  final AudioPlayerService player;
+
+  const _ChapterSheet({required this.book, required this.player});
+
+  @override
+  State<_ChapterSheet> createState() => _ChapterSheetState();
+}
+
+class _ChapterSheetState extends State<_ChapterSheet> {
+  static const int pageSize = 300;
+
+  final ScrollController _listController = ScrollController();
+  final ScrollController _chipController = ScrollController();
+  final Map<int, GlobalKey> _rowKeys = {};
+
+  late int _page = (widget.player.currentChapterIndex.clamp(
+          0, widget.book.chapters.length - 1) / pageSize)
+      .floor();
+
+  @override
+  void initState() {
+    super.initState();
+    // 打开面板即定位到当前播放章节
+    WidgetsBinding.instance.addPostFrameCallback((_) => _locateCurrent());
+  }
+
+  @override
+  void dispose() {
+    _listController.dispose();
+    _chipController.dispose();
+    super.dispose();
+  }
+
+  int get _pageCount =>
+      (widget.book.chapters.length / pageSize).ceil().clamp(1, 99999);
+
+  int get _startIndex => _page * pageSize;
+
+  int get _endIndex =>
+      ((_page + 1) * pageSize).clamp(0, widget.book.chapters.length);
+
+  /// 当前播放章节在第几页（用于「定位」按钮）。
+  int get _playingPage =>
+      (widget.player.currentChapterIndex.clamp(
+          0, widget.book.chapters.length - 1) / pageSize)
+      .floor();
+
+  void _locateCurrent() {
+    if (!mounted) return;
+    final index = widget.player.currentChapterIndex;
+    if (index < 0 || index >= widget.book.chapters.length) return;
+    // 章节不在当前页 → 先切页，等下一帧行构建出来再滚
+    if (_playingPage != _page) {
+      setState(() => _page = _playingPage);
+      WidgetsBinding.instance.addPostFrameCallback((_) => _locateCurrent());
+      return;
+    }
+    final key = _rowKeys[index];
+    final ctx = key?.currentContext;
+    if (ctx != null) {
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOutCubic,
+        alignment: 0.4, // 目标行停在视口 40% 处，便于看到上下文
+      );
+    }
+  }
+
+  void _switchPage(int page) {
+    setState(() => _page = page.clamp(0, _pageCount - 1));
+    // 切页后回到列表顶部
+    if (_listController.hasClients) _listController.jumpTo(0);
+    // 让选中的 chip 滚进可视区（1500 集 = 5 页，通常都可见，保险起见）
+    final chipCtx = _chipKeys[page]?.currentContext;
+    if (chipCtx != null) {
+      Scrollable.ensureVisible(chipCtx,
+          duration: const Duration(milliseconds: 250),
+          alignment: 0.5);
+    }
+  }
+
+  final Map<int, GlobalKey> _chipKeys = {};
+
+  @override
+  Widget build(BuildContext context) {
+    final player = widget.player;
+    final book = widget.book;
+    final scheme = Theme.of(context).colorScheme;
+    final start = _startIndex;
+    final end = _endIndex;
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.75,
+      maxChildSize: 0.92,
+      expand: false,
+      builder: (ctx, _) => Column(
+        children: [
+          // 标题 + 定位按钮
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 6, 8, 0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '目录（${book.chapters.length} 集）',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.my_location_rounded),
+                  tooltip: '定位到正在播放',
+                  onPressed: _locateCurrent,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close_rounded),
+                  onPressed: () => Navigator.pop(ctx),
+                ),
+              ],
+            ),
+          ),
+          // 分页 chips：1-300 / 301-600 / …
+          if (_pageCount > 1)
+            SizedBox(
+              height: 44,
+              child: ListView.builder(
+                controller: _chipController,
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                itemCount: _pageCount,
+                itemBuilder: (ctx, i) {
+                  final s = i * pageSize + 1;
+                  final e = ((i + 1) * pageSize).clamp(0, book.chapters.length);
+                  final selected = i == _page;
+                  return Padding(
+                    key: _chipKeys[i] ??= GlobalKey(),
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: ChoiceChip(
+                      label: Text('$s-$e'),
+                      selected: selected,
+                      onSelected: (_) => _switchPage(i),
+                    ),
+                  );
+                },
+              ),
+            ),
+          // 当前页章节列表
+          Expanded(
+            child: ListView.builder(
+              controller: _listController,
+              padding: const EdgeInsets.only(bottom: 12),
+              itemCount: end - start,
+              itemBuilder: (ctx, row) {
+                final index = start + row;
+                final chapter = book.chapters[index];
+                final isCurrent = index == player.currentChapterIndex;
+                return ListTile(
+                  key: _rowKeys[index] ??= GlobalKey(),
+                  dense: true,
+                  leading: isCurrent
+                      ? Icon(Icons.play_arrow_rounded, color: scheme.primary)
+                      : SizedBox(
+                          width: 28,
+                          child: Text('${index + 1}',
+                              textAlign: TextAlign.right,
+                              style: TextStyle(color: scheme.onSurfaceVariant)),
+                        ),
+                  title: Text(
+                    chapter.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontWeight: isCurrent ? FontWeight.bold : null,
+                      color: isCurrent ? scheme.primary : null,
+                    ),
+                  ),
+                  subtitle: Text(_formatDuration(chapter.duration)),
+                  onTap: () {
+                    player.jumpToChapter(index);
+                    Navigator.pop(ctx);
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

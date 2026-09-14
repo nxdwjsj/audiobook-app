@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/rendering.dart' show Offset;
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/bookshelf_book.dart';
 import '../models/listen_session.dart';
@@ -110,9 +111,11 @@ class StorageService {
   // --- 全网搜书 / 书架偏好 ---
 
   /// 转存分享的目标目录。fid 为空表示用夸克默认的「来自：分享」目录。
-  Future<void> saveQuarkSaveDir(String fid, String name) async {
+  /// path 为该目录的绝对路径（如 /有声书），供书架长按跳转网盘时拼面包屑。
+  Future<void> saveQuarkSaveDir(String fid, String name, String path) async {
     await config.put('quark_save_dir_fid', fid);
     await config.put('quark_save_dir_name', name);
+    await config.put('quark_save_dir_path', path);
   }
 
   String? getQuarkSaveDirFid() {
@@ -122,6 +125,8 @@ class StorageService {
 
   String? getQuarkSaveDirName() => config.get('quark_save_dir_name')?.toString();
 
+  String? getQuarkSaveDirPath() => config.get('quark_save_dir_path')?.toString();
+
   /// 书架布局：每行列数。0 表示列表视图。
   Future<void> saveShelfColumns(int columns) async {
     await config.put('shelf_columns', columns);
@@ -129,6 +134,37 @@ class StorageService {
 
   int getShelfColumns() =>
       (config.get('shelf_columns') as num?)?.toInt() ?? 3;
+
+  // --- 悬浮播放球位置 ---
+
+  /// 浮球贴边侧：true = 右边，false = 左边。
+  Future<void> saveBallRight(bool right) async {
+    await config.put('ball_right', right);
+  }
+
+  bool getBallRight() => config.get('ball_right') as bool? ?? true;
+
+  /// 浮球垂直位置（占屏幕高度比例 0~1），旋转屏幕后仍大致可用。
+  Future<void> saveBallDyRatio(double ratio) async {
+    await config.put('ball_dy_ratio', ratio);
+  }
+
+  double getBallDyRatio() =>
+      (config.get('ball_dy_ratio') as num?)?.toDouble() ?? 0.62;
+
+  // --- 详情页目录工具条位置（绝对像素，null = 默认右下角）---
+
+  Future<void> saveChapterToolbarOffset(Offset offset) async {
+    await config.put('chapter_toolbar_dx', offset.dx);
+    await config.put('chapter_toolbar_dy', offset.dy);
+  }
+
+  Offset? getChapterToolbarOffset() {
+    final dx = (config.get('chapter_toolbar_dx') as num?)?.toDouble();
+    final dy = (config.get('chapter_toolbar_dy') as num?)?.toDouble();
+    if (dx == null || dy == null) return null;
+    return Offset(dx, dy);
+  }
 }
 
 /// A no-op box implementation used when Hive is not available.

@@ -5,6 +5,16 @@ import '../models/drive_item.dart';
 import 'cloud_drive_service.dart';
 import 'storage_service.dart';
 
+/// 转存结果：摊平的音频列表 + 顶层目录信息（目录名 / 转存后的新 fid）。
+/// 书架据此记录「这本书存在网盘的哪个位置」，长按可直接跳进网盘。
+class SaveShareResult {
+  final List<DriveItem> audioFiles;
+  final String? savedDirFid;
+  final String? savedDirName;
+
+  const SaveShareResult(this.audioFiles, {this.savedDirFid, this.savedDirName});
+}
+
 /// Quark (夸克) cloud drive service.
 ///
 /// Uses reversed-engineered PC-client API endpoints (drive-pc.quark.cn).
@@ -586,18 +596,23 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
   /// 转存后的音频缓存：缓存键 -> 自己网盘里的音频列表。
   final Map<String, List<DriveItem>> _savedShareAudio = {};
 
+  /// 转存结果缓存（含目录 fid）。与 [_savedShareAudio] 分开存，
+  /// 旧调用点（getShareAudioStreamUrl 按 fid 找音频）继续用后者。
+  final Map<String, SaveShareResult> _savedShareResults = {};
+
   /// 正在进行的转存任务：缓存键 -> Future。
   /// 同一个分享被连点两次时复用同一个任务，避免转存出两份重复文件。
-  final Map<String, Future<List<DriveItem>>> _savingShares = {};
+  final Map<String, Future<SaveShareResult>> _savingShares = {};
 
   String? _shareInboxFid;
 
   /// 把分享转存到自己的网盘，返回转存后可播放的音频列表
-  /// （fileId 已是自己网盘的 fid，可直接走 file/download）。
+  /// （fileId 已是自己网盘的 fid，可直接走 file/download），
+  /// 以及这本书顶层目录（如有）转存后的 fid —— 书架用它记录网盘存放位置。
   ///
   /// [entries] 只转存指定的顶层条目（即分享里的某一本书）；为空则整个分享。
   /// [toDirFid] 指定保存目录；为空时用「来自：分享」目录（没有就放根目录）。
-  Future<List<DriveItem>> saveShareToMyDrive(
+  Future<SaveShareResult> saveShareToMyDrive(
     String shareUrl, {
     String? pwd,
     int maxDepth = 4,
@@ -608,7 +623,7 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
     final key = _shareKey(pwdId, entries, toDirFid);
     // 空结果也要缓存：否则「转存成功但没找到音频」的分享会被反复转存，
     // 在网盘里堆出重复文件。
-    final cached = _savedShareAudio[key];
+    final cached = _savedShareResults[key];
     if (cached != null) return Future.value(cached);
     final inFlight = _savingShares[key];
     if (inFlight != null) return inFlight;
@@ -634,7 +649,7 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
     return '$pwdId|$fids|${toDirFid ?? ''}';
   }
 
-  Future<List<DriveItem>> _doSaveShare(
+  Future<SaveShareResult> _doSaveShare(
     String pwdId,
     String? pwd,
     int maxDepth,
@@ -735,8 +750,16 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
     for (final b in buckets) {
       out.addAll(b);
     }
-    _savedShareAudio[_shareKey(pwdId, onlyEntries, toDirFid)] = out;
-    return out;
+    // 这本书只有一个顶层目录时，记录该目录转存后的 fid 和名字，
+    // 书架即可显示「存在网盘哪里」并直接跳进去。
+    final String? savedDirFid = dirTasks.length == 1 ? dirTasks[0].$1 : null;
+    final String? savedDirName = dirTasks.length == 1 ? dirTasks[0].$2 : null;
+    final result =
+        SaveShareResult(out, savedDirFid: savedDirFid, savedDirName: savedDirName);
+    final key = _shareKey(pwdId, onlyEntries, toDirFid);
+    _savedShareAudio[key] = out;
+    _savedShareResults[key] = result;
+    return result;
   }
 
   /// 轮询转存任务直到完成，返回转存后顶层条目的新 fid。
@@ -908,7 +931,7 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
     if (pwdId.isEmpty) throw Exception('无法从链接中提取分享码');
 
     final audio = _savedShareAudio[_shareKey(pwdId, null, null)] ??
-        await saveShareToMyDrive(shareUrl);
+        (await saveShareToMyDrive(shareUrl)).audioFiles;
     if (audio.isEmpty) throw Exception('该分享里没有可直接播放的音频文件');
 
     DriveItem? target;
