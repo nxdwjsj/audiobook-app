@@ -73,6 +73,9 @@ void main() async {
             ctx.read<BookshelfRepository>(),
           ),
         ),
+        // 页面里用 context.read<StorageService>() 读写偏好（书架布局、转存目录）。
+        // 必须注册成 Provider，否则取值时会抛 ProviderNotFoundException。
+        Provider<StorageService>.value(value: storage),
         ChangeNotifierProvider<BaiduDriveService>.value(value: baiduDrive),
         ChangeNotifierProvider<QuarkDriveService>.value(value: quarkDrive),
         Provider<ResourceSearchService>(

@@ -10,10 +10,10 @@
 一个 Flutter 有声书播放器（主用 Android 真机），核心能力是**直接播放网盘里的音频文件夹**，把网盘文件夹当作一本书来管理（目录、进度、续播、历史）。
 
 - 应用名：`audiobook_app`，显示名「聆云」
-- 版本：`1.0.2+3`
+- 版本：`1.0.3+4`
 - 平台目录：`android/`（主力）、`ios/`、`web/`（未验证）
-- **下载安装**：[Releases · 最新版](https://github.com/nxdwjsj/audiobook-app/releases/latest) → 点 `lingyun-v1.0.2.apk` 直接下载安装（release 构建、debug 签名、通用包）
-- 仓库内另有副本：`releases/聆云_v1.0.2.apk`
+- **下载安装**：[Releases · 最新版](https://github.com/nxdwjsj/audiobook-app/releases/latest) → 点 `lingyun-v1.0.3.apk` 直接下载安装（release 构建、debug 签名、通用包）
+- 仓库内另有副本：`releases/聆云_v1.0.3.apk`
 
 **技术栈**
 
@@ -284,6 +284,7 @@ box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `li
 | 通知栏不显示播放卡片 | 三个条件缺一不可：main 清单注册 `com.ryanheise.audioservice.AudioService` + `MediaButtonReceiver`、`MainActivity` 继承 `AudioServiceActivity`、Android 13+ 授予 `POST_NOTIFICATIONS` |
 | 夸克登录页显示成「立即下载」推广页 | `pan.quark.cn/account/login` 在手机 UA 下会重定向到下载引导页 → 内置 WebView 必须伪装桌面 UA 并开 `useWideViewPort` |
 | 点一本书却把整个合集转存进网盘 | 分享顶层是多个书目录时要按顶层分组（`ShareGroup`），转存只提交该组的 `entries`，bookId 也要带书名（否则同一分享多本书 id 冲突） |
+| 页面整块变成灰色空白 | 页面里用了 `context.read<X>()` 但 `X` 没注册成 Provider → 取不到就抛 `ProviderNotFoundException`，整页渲染失败。加新 Provider 后要同步在 `main.dart` 的 `MultiProvider` 里注册（`StorageService` 就是这样漏掉过） |
 
 ---
 
