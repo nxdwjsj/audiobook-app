@@ -4,6 +4,8 @@ import 'package:provider/provider.dart';
 import '../services/baidu_drive_service.dart';
 import '../services/cloud_drive_service.dart';
 import '../services/quark_drive_service.dart';
+import '../widgets/throttled_navigator.dart';
+import 'quark_web_login_page.dart';
 
 /// Page for connecting cloud drive accounts (Baidu / Quark).
 class DriveLoginPage extends StatefulWidget {
@@ -271,13 +273,31 @@ class _DriveLoginPageState extends State<DriveLoginPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                FilledButton.icon(
+                  onPressed: _loading
+                      ? null
+                      : () => context.pushThrottled(
+                            MaterialPageRoute(
+                              builder: (_) => const QuarkWebLoginPage(),
+                            ),
+                          ),
+                  icon: const Icon(Icons.login),
+                  label: const Text('网页登录（自动获取 Cookie）'),
+                ),
+                const SizedBox(height: 8),
                 const Text(
-                  '1. 在浏览器登录夸克网盘 (pan.quark.cn)',
+                  '推荐。在应用内打开夸克官方登录页，用「手机号 + 验证码」登录，'
+                  '登录成功后自动读取并保存 Cookie，不用抓包。',
                   style: TextStyle(fontSize: 13),
+                ),
+                const Divider(height: 28),
+                Text(
+                  '或手动粘贴 Cookie',
+                  style: Theme.of(context).textTheme.titleSmall,
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  '2. 打开开发者工具 → Application → Cookies，复制完整 Cookie 字符串',
+                  '在电脑浏览器登录 pan.quark.cn，开发者工具里复制完整 Cookie 字符串。',
                   style: TextStyle(fontSize: 13),
                 ),
                 const SizedBox(height: 8),
@@ -291,7 +311,7 @@ class _DriveLoginPageState extends State<DriveLoginPage> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                ElevatedButton(
+                OutlinedButton(
                   onPressed: _loading ? null : _saveQuarkCookie,
                   child: const Text('保存并验证'),
                 ),

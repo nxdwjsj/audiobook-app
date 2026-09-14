@@ -79,7 +79,8 @@ audiobook_app_src/
 | [main.dart](audiobook_app_src/lib/main.dart) | 依赖注入总入口；网盘服务的 `streamUrlResolver` 在这里装配 |
 | [audio_player_service.dart](audiobook_app_src/lib/services/audio_player_service.dart) | **播放核心**：加载章节、解析直链、会话制历史、预加载、定时关闭 |
 | [cloud_drive_service.dart](audiobook_app_src/lib/services/cloud_drive_service.dart) | 网盘抽象接口 + `ResolvedStream` / `ShareParseResult` |
-| [quark_drive_service.dart](audiobook_app_src/lib/services/quark_drive_service.dart) | 夸克网盘实现（Cookie 登录） |
+| [quark_drive_service.dart](audiobook_app_src/lib/services/quark_drive_service.dart) | 夸克网盘实现（Cookie 登录，含校验后落盘） |
+| [quark_web_login_page.dart](audiobook_app_src/lib/pages/quark_web_login_page.dart) | 夸克登录：内置 WebView 打开官方登录页，自动读取 Cookie |
 | [baidu_drive_service.dart](audiobook_app_src/lib/services/baidu_drive_service.dart) | 百度网盘实现（OAuth + access_token） |
 | [storage_service.dart](audiobook_app_src/lib/services/storage_service.dart) | Hive 初始化、box 与 adapter 注册 |
 | [shelf_book_detail_page.dart](audiobook_app_src/lib/pages/shelf_book_detail_page.dart) | 书籍详情页：封面/信息/完整目录/目录工具条 |
@@ -169,9 +170,17 @@ box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `li
 
 ### 4.4 网盘接入要点
 
-- **夸克**：用户从浏览器复制 Cookie 粘贴登录；**CDN 强制要求 Cookie，否则返回 412**；UA/Referer 无效。
+- **夸克登录**：优先用内置 WebView 打开夸克官方登录页（手机号 + 验证码），
+  登录后读 WebView 的 Cookie 交给 `setCookie` 校验、通过才落盘，不用手动抓包；
+  手动粘贴 Cookie 作为备用入口保留。
+  **CDN 强制要求 Cookie，否则返回 412**；UA/Referer 无效。
   请求头仅 `{'Cookie': cookie}`。日志**绝不能**打印 headers/Cookie（曾泄露到 logcat，已修）。
 - **百度**：OAuth（AppKey + 手动粘贴 access_token）；`dlink` 必须拼 `access_token` 且带浏览器 UA。
+
+> `flutter_inappwebview` **必须锁 6.2.0-beta.3**：稳定版 6.1.5 依赖的
+> `flutter_inappwebview_android` 1.1.3 仍调用 `getDefaultProguardFile('proguard-android.txt')`，
+> 本项目用的 AGP 9.1.0 已不支持，会直接构建失败；beta 线的 1.2.0-beta.3 才改成
+> `proguard-android-optimize.txt`。
 
 ---
 
