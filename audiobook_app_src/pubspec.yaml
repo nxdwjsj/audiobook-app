@@ -1,7 +1,7 @@
 name: audiobook_app
 description: 聆云 - 网盘有声书播放器（直接播放网盘音频文件夹，管理目录、进度与收听历史）
 publish_to: 'none'
-version: 1.0.3+4
+version: 1.0.4+5
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -49,6 +49,7 @@ dependencies:
   # 仍用 getDefaultProguardFile('proguard-android.txt')，在 AGP 9 下直接构建失败。
   flutter_inappwebview: 6.2.0-beta.3
   just_audio_background: ^0.0.1-beta.17
+  permission_handler: 11.3.1
 
 dev_dependencies:
   flutter_test:

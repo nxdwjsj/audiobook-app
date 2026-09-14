@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import '../services/audio_player_service.dart';
 import '../theme/app_theme.dart';
@@ -17,6 +18,20 @@ class PlayerPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final player = context.watch<AudioPlayerService>();
+
+    // 通知权限被拒时提示一次：通知栏/锁屏不会有播放控制。
+    // 「只提示一次」的标志放在 service 上——本页是无状态组件，存不了实例字段。
+    if (player.notificationBlocked && !player.notificationNoticeShown) {
+      player.notificationNoticeShown = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('通知权限未开启，通知栏不会显示播放控制'),
+          duration: Duration(seconds: 6),
+          action: SnackBarAction(label: '去开启', onPressed: openAppSettings),
+        ));
+      });
+    }
 
     return _PlayerPageScope(
       child: Scaffold(

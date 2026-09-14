@@ -685,12 +685,24 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
     final taskId = data['data']?['task_id']?.toString() ?? '';
     if (taskId.isEmpty) throw Exception('转存任务创建失败');
 
-    final savedFids = await _awaitTask(taskId);
-    if (savedFids.length != fidList.length) {
+    var savedFids = await _awaitTask(taskId);
+    // 夸克在任务刚 done 时偶尔还没带上 save_as_top_fids（转存目录时尤其常见），
+    // 再等两轮；仍拿不到就在目标目录里按名字回查，
+    // 避免「其实已经转存成功，却弹数量异常」。
+    for (var retry = 0;
+        retry < 2 && savedFids.length != metas.length;
+        retry++) {
+      await Future.delayed(const Duration(milliseconds: 1200));
+      savedFids = await _awaitTask(taskId);
+    }
+    if (savedFids.length != metas.length) {
+      savedFids = await _locateSavedEntries(toDir, metas);
+    }
+    if (savedFids.length != metas.length) {
       // 数量对不上就没法保证「下标 ↔ 文件名」一一对应，
       // 与其静默错配章节（点 A 播 B），不如让用户重试。
       throw Exception(
-          '转存结果数量异常（${savedFids.length}/${fidList.length}），请稍后重试');
+          '转存结果数量异常（${savedFids.length}/${metas.length}），请稍后重试');
     }
 
     // savedFids 与提交顺序一一对应：目录递归列出，文件直接采用新 fid。
@@ -758,6 +770,42 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
       }
     }
     throw Exception('转存超时（任务可能仍在后台进行），请稍后在网盘中确认');
+  }
+
+  /// 转存任务给的 save_as_top_fids 不可靠时，按名字在目标目录里回查新 fid。
+  ///
+  /// 夸克对「转存目录」有时不返回 save_as_top_fids，与其让用户重试，
+  /// 不如直接列一次目标目录，按条目名 + 类型对上。
+  Future<List<String>> _locateSavedEntries(
+    String toDirFid,
+    List<Map<String, dynamic>> metas,
+  ) async {
+    final List<DriveItem> items;
+    try {
+      items = await listFolder(
+        dirFileId: (toDirFid.isEmpty || toDirFid == '0') ? null : toDirFid,
+      );
+    } catch (e) {
+      debugPrint('[quark] 回查转存结果失败: $e');
+      return const [];
+    }
+    final byName = <String, List<DriveItem>>{};
+    for (final it in items) {
+      byName.putIfAbsent(it.name, () => []).add(it);
+    }
+    final out = <String>[];
+    final used = <String, int>{};
+    for (final e in metas) {
+      final name = e['file_name']?.toString() ?? '';
+      final wantDir = e['dir'] == true;
+      final candidates =
+          byName[name]?.where((i) => i.isDir == wantDir).toList() ?? const [];
+      final idx = used[name] ?? 0;
+      if (idx >= candidates.length) return const [];
+      used[name] = idx + 1;
+      out.add(candidates[idx].fileId);
+    }
+    return out;
   }
 
   /// 转存目标目录：优先「来自：分享」，没有就放根目录。

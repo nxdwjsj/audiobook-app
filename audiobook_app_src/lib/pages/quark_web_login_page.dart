@@ -43,6 +43,9 @@ class _QuarkWebLoginPageState extends State<QuarkWebLoginPage> {
   /// 最近一次读取时是否见到过会话字段，用来区分「还没登录」和「Cookie 无效」。
   bool _sawSessionCookie = false;
 
+  /// 页面地址是否已离开登录页（通常意味着登录完成），仅用于文案提示。
+  bool _leftLoginPage = false;
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -85,9 +88,13 @@ class _QuarkWebLoginPageState extends State<QuarkWebLoginPage> {
               },
               onLoadStop: (controller, url) {
                 final u = url?.toString() ?? '';
-                // 登录成功后会跳回网盘首页，此时静默尝试读取一次
-                if (u.contains('pan.quark.cn') && !u.contains('login')) {
-                  _readCookie(silent: true);
+                // 只做状态提示，**绝不自动读取 / 自动关闭**：
+                // 页面一离开 login 就是首页（未登录也会跳），自动读 Cookie
+                // 会导致「刚打开登录页就被关掉」。
+                final left =
+                    u.contains('pan.quark.cn') && !u.contains('login');
+                if (mounted && left != _leftLoginPage) {
+                  setState(() => _leftLoginPage = left);
                 }
               },
             ),
@@ -109,8 +116,10 @@ class _QuarkWebLoginPageState extends State<QuarkWebLoginPage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              '提示：在页面里用「手机号 + 验证码」登录即可，登录成功后会自动读取 Cookie。'
-              '若没有自动完成，点下方按钮手动读取。',
+              _leftLoginPage
+                  ? '已离开登录页，若已登录完成，点下方按钮完成授权。'
+                  : '提示：在页面里用「手机号 + 验证码」登录，登录完成后'
+                      '点下方按钮读取 Cookie。页面不会自动关闭。',
               style: theme.textTheme.bodySmall,
             ),
             if (_error != null) ...[

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:just_audio_background/just_audio_background.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../models/book.dart';
 import '../models/chapter.dart';
 import '../models/listen_session.dart';
@@ -151,6 +152,8 @@ class AudioPlayerService extends ChangeNotifier {
     int startChapter = 0,
     Duration startPosition = Duration.zero,
   }) async {
+    // 通知栏播放控制依赖通知权限（Android 13+），开始播放时申请时机最准
+    await _ensureNotificationPermission();
     _currentBook = book;
     _chapters = book.chapters;
     if (_chapters.isEmpty) {
@@ -228,6 +231,34 @@ class AudioPlayerService extends ChangeNotifier {
       nextChapter();
     } else {
       _player.seek(dur);
+    }
+  }
+
+  /// 通知栏播放控制是否被系统通知权限挡住（Android 13+ 用户拒绝时为 true）。
+  /// 播放本身不受影响，只是通知栏 / 锁屏不会出现播放卡片。
+  bool notificationBlocked = false;
+
+  /// 「通知权限被拒」的提示是否已经弹过（避免每次进播放页都弹）
+  bool notificationNoticeShown = false;
+
+  bool _askedNotificationPermission = false;
+
+  /// 申请通知权限（仅 Android 13+ 需要）。被拒不抛错，只置标志，
+  /// 由 UI 提示用户去系统设置里打开。
+  Future<void> _ensureNotificationPermission() async {
+    if (_askedNotificationPermission) return;
+    _askedNotificationPermission = true;
+    try {
+      var status = await Permission.notification.status;
+      if (status.isGranted) return;
+      status = await Permission.notification.request();
+      if (!status.isGranted) {
+        notificationBlocked = true;
+        debugPrint('[Player] 通知权限被拒绝，通知栏不会显示播放控制');
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('[Player] 申请通知权限失败: $e');
     }
   }
 

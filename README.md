@@ -10,10 +10,10 @@
 一个 Flutter 有声书播放器（主用 Android 真机），核心能力是**直接播放网盘里的音频文件夹**，把网盘文件夹当作一本书来管理（目录、进度、续播、历史）。
 
 - 应用名：`audiobook_app`，显示名「聆云」
-- 版本：`1.0.3+4`
+- 版本：`1.0.4+5`
 - 平台目录：`android/`（主力）、`ios/`、`web/`（未验证）
-- **下载安装**：[Releases · 最新版](https://github.com/nxdwjsj/audiobook-app/releases/latest) → 点 `lingyun-v1.0.3.apk` 直接下载安装（release 构建、debug 签名、通用包）
-- 仓库内另有副本：`releases/聆云_v1.0.3.apk`
+- **下载安装**：[Releases · 最新版](https://github.com/nxdwjsj/audiobook-app/releases/latest) → 点 `lingyun-v1.0.4.apk` 直接下载安装（release 构建、debug 签名、通用包）
+- 仓库内另有副本：`releases/聆云_v1.0.4.apk`
 
 **技术栈**
 
@@ -82,7 +82,7 @@ audiobook_app_src/
 | [audio_player_service.dart](audiobook_app_src/lib/services/audio_player_service.dart) | **播放核心**：加载章节、解析直链、会话制历史、预加载、定时关闭 |
 | [cloud_drive_service.dart](audiobook_app_src/lib/services/cloud_drive_service.dart) | 网盘抽象接口 + `ResolvedStream` / `ShareParseResult` |
 | [quark_drive_service.dart](audiobook_app_src/lib/services/quark_drive_service.dart) | 夸克网盘实现（Cookie 登录，含校验后落盘） |
-| [quark_web_login_page.dart](audiobook_app_src/lib/pages/quark_web_login_page.dart) | 夸克登录：内置 WebView 打开官方登录页，自动读取 Cookie |
+| [quark_web_login_page.dart](audiobook_app_src/lib/pages/quark_web_login_page.dart) | 夸克登录：内置 WebView（桌面 UA）打开官方登录页，用户点按钮读取 Cookie |
 | [baidu_drive_service.dart](audiobook_app_src/lib/services/baidu_drive_service.dart) | 百度网盘实现（OAuth + access_token） |
 | [storage_service.dart](audiobook_app_src/lib/services/storage_service.dart) | Hive 初始化、box 与 adapter 注册 |
 | [shelf_book_detail_page.dart](audiobook_app_src/lib/pages/shelf_book_detail_page.dart) | 书籍详情页：封面/信息/完整目录/目录工具条 |
@@ -192,9 +192,10 @@ box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `li
 
 ### 4.4 网盘接入要点
 
-- **夸克登录**：优先用内置 WebView 打开夸克官方登录页（手机号 + 验证码），
-  登录后读 WebView 的 Cookie 交给 `setCookie` 校验、通过才落盘，不用手动抓包；
-  手动粘贴 Cookie 作为备用入口保留。
+- **夸克登录**：优先用内置 WebView（**桌面 UA**，否则跳「立即下载」推广页）打开夸克官方登录页
+  （手机号 + 验证码），登录完成后由用户点按钮读取 WebView 的 Cookie，
+  交给 `setCookie` 校验、通过才落盘，不用手动抓包；手动粘贴 Cookie 作为备用入口保留。
+  **不要自动读 Cookie 并关页面**——`account/login` 未登录也会跳首页，会误判成「已完成」。
   **CDN 强制要求 Cookie，否则返回 412**；UA/Referer 无效。
   请求头仅 `{'Cookie': cookie}`。日志**绝不能**打印 headers/Cookie（曾泄露到 logcat，已修）。
 - **百度**：OAuth（AppKey + 手动粘贴 access_token）；`dlink` 必须拼 `access_token` 且带浏览器 UA。
@@ -281,10 +282,12 @@ box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `li
 | 开片尾跳过后瞬间连跳好几章 | `_maybeSkipOutro` 里切章是异步的，期间位置事件仍停在旧章节末尾；而 `_loadCurrentChapter` 又把去重标记清空，于是连锁触发 `nextChapter()` → 改用 `_switchingChapter` 锁，**加载章节时不清、落到新章节（位置距结尾还早）时才解除** |
 | **代码被误删无法恢复** | 项目此前**没有 git**，删除即永久丢失 → 现已建仓，务必勤提交 |
 | **release 包装上后整个 App 断网**（WebView 白屏、Cookie 校验必失败） | Flutter 只在 `android/app/src/debug/AndroidManifest.xml` 里加了 `INTERNET` 权限，`main/AndroidManifest.xml` **没有** → debug 版正常、release 版无网络权限。**已修**：main 清单显式声明 `INTERNET`，发布前务必核对 |
-| 通知栏不显示播放卡片 | 三个条件缺一不可：main 清单注册 `com.ryanheise.audioservice.AudioService` + `MediaButtonReceiver`、`MainActivity` 继承 `AudioServiceActivity`、Android 13+ 授予 `POST_NOTIFICATIONS` |
+| 通知栏不显示播放卡片 | 三个条件缺一不可：main 清单注册 `com.ryanheise.audioservice.AudioService` + `MediaButtonReceiver`、`MainActivity` 继承 `AudioServiceActivity`、Android 13+ 授予 `POST_NOTIFICATIONS`。权限改在**开始播放时**用 `permission_handler` 申请（早期放在 `MainActivity.onCreate` 里，部分 ROM 弹不出来）；被拒时播放页会提示并可一键跳系统设置 |
 | 夸克登录页显示成「立即下载」推广页 | `pan.quark.cn/account/login` 在手机 UA 下会重定向到下载引导页 → 内置 WebView 必须伪装桌面 UA 并开 `useWideViewPort` |
 | 点一本书却把整个合集转存进网盘 | 分享顶层是多个书目录时要按顶层分组（`ShareGroup`），转存只提交该组的 `entries`，bookId 也要带书名（否则同一分享多本书 id 冲突） |
 | 页面整块变成灰色空白 | 页面里用了 `context.read<X>()` 但 `X` 没注册成 Provider → 取不到就抛 `ProviderNotFoundException`，整页渲染失败。加新 Provider 后要同步在 `main.dart` 的 `MultiProvider` 里注册（`StorageService` 就是这样漏掉过） |
+| 登录页「刚打开就自动关掉」 | 别在 `onLoadStop` 里按 URL 猜登录状态：`pan.quark.cn/account/login` 未登录也会跳到首页，一读 Cookie（WebView 可能残留旧会话）就 `pop` → 现在只做文案提示，**由用户点按钮完成** |
+| 转存成功却弹「转存结果数量异常（0/1）」 | 夸克任务 done 时 `save_as_top_fids` 有时为空（转存**目录**尤其常见）→ 先复查两轮 task，仍为空就列目标目录按名字 + 类型回查新 fid |
 
 ---
 

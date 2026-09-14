@@ -23,7 +23,9 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
   final List<ResourceResult> _results = [];
   String? _progress;
   bool _searching = false;
-  bool _shelving = false;
+
+  /// 正在转存的那本书（bookId）。用整页级布尔量会让所有卡片一起转圈。
+  String? _shelvingKey;
 
   /// 转存目标目录。null = 用夸克的「来自：分享」目录
   String? _saveDirFid;
@@ -122,14 +124,14 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
   /// 夸克分享文件没有直链，必须先转存到自己的网盘，转存后的 fid 才能播放。
   Future<bool> _shelve(ResourceResult r, {bool play = false}) async {
     // 转存 + 入架期间锁住，连点会并发 playBook 并把播放页压两层
-    if (_shelving) return false;
+    if (_shelvingKey != null) return false;
     final messenger = ScaffoldMessenger.of(context);
     final audio = r.audioItems;
     if (audio.isEmpty) {
       messenger.showSnackBar(const SnackBar(content: Text('该分享里没有音频文件')));
       return false;
     }
-    setState(() => _shelving = true);
+    setState(() => _shelvingKey = _bookIdFor(r));
     try {
       final repo = context.read<BookshelfRepository>();
       final player = context.read<AudioPlayerService>();
@@ -186,7 +188,7 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
       }
       return true;
     } finally {
-      if (mounted) setState(() => _shelving = false);
+      if (mounted) setState(() => _shelvingKey = null);
     }
   }
 
@@ -230,7 +232,7 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
           Padding(
             padding: const EdgeInsets.fromLTRB(18, 0, 18, 4),
             child: InkWell(
-              onTap: _shelving ? null : _pickSaveDir,
+              onTap: _shelvingKey != null ? null : _pickSaveDir,
               borderRadius: BorderRadius.circular(8),
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 4),
@@ -311,8 +313,8 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
             : Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (_shelving)
-                    // 转存期间给个明确的忙碌反馈，顺便锁住按钮
+                  if (_shelvingKey == _bookIdFor(r))
+                    // 正在转存这一本：给个明确的忙碌反馈，顺便锁住按钮
                     const Padding(
                       padding: EdgeInsets.symmetric(horizontal: 14),
                       child: SizedBox(
@@ -326,12 +328,14 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
                       IconButton(
                         icon: const Icon(Icons.add_rounded),
                         tooltip: '加入书架',
-                        onPressed: () => _shelve(r),
+                        onPressed:
+                            _shelvingKey != null ? null : () => _shelve(r),
                       ),
                     IconButton(
                       icon: const Icon(Icons.play_arrow_rounded),
                       tooltip: '播放',
-                      onPressed: () => _shelve(r, play: true),
+                      onPressed:
+                          _shelvingKey != null ? null : () => _shelve(r, play: true),
                     ),
                   ],
                 ],
