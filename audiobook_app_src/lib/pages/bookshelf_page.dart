@@ -16,7 +16,6 @@ import '../widgets/frosted_glass.dart';
 import '../widgets/throttled_navigator.dart';
 import 'drive_browser_page.dart';
 import 'resource_search_page.dart';
-import 'search_page.dart';
 import 'shelf_book_detail_page.dart';
 
 class BookshelfPage extends StatefulWidget {
@@ -158,7 +157,6 @@ class _BookshelfPageState extends State<BookshelfPage> {
       builder: (ctx) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _menuTile('explore', Icons.travel_explore_rounded, '全网搜书'),
           _menuTile('search', Icons.search_rounded, '搜索'),
           _menuTile('drive', Icons.cloud_rounded, '打开网盘'),
           _menuTile('local', Icons.download_rounded, '导入本地音频'),
@@ -200,14 +198,9 @@ class _BookshelfPageState extends State<BookshelfPage> {
       case 'layout':
         await _pickLayout();
         break;
-      case 'explore':
-        context.pushThrottled(
-          MaterialPageRoute(builder: (_) => const ResourceSearchPage()),
-        );
-        break;
       case 'search':
         context.pushThrottled(
-          MaterialPageRoute(builder: (_) => const SearchPage()),
+          MaterialPageRoute(builder: (_) => const ResourceSearchPage()),
         );
         break;
       case 'sort':

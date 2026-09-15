@@ -264,6 +264,13 @@ class AudioPlayerService extends ChangeNotifier {
     _currentChapterIndex = index;
     await _startNewSession();
     await _loadCurrentChapter();
+    // 首次加载失败立刻重试一次：在线章节要在播放时抓播放页解析直链，
+    // 站点限流/首次握手慢导致的偶发失败很常见。不重试的话界面已高亮新章
+    // 却没有声音，用户只能再点一次目录（表现为「要点两次才切成功」）。
+    if (lastError != null) {
+      debugPrint('[Player] 切章首次失败，立即重试一次: ${_chapters[index].title}');
+      await _loadCurrentChapter();
+    }
     if (lastError != null) {
       _scheduleAdvanceRetry();
     } else {
@@ -273,16 +280,22 @@ class AudioPlayerService extends ChangeNotifier {
   }
 
   /// 新建收听会话（手动点播时调用）。
+  /// 会话只是附属的历史数据，写入失败不能阻断播放——否则切章时目录已高亮
+  /// 新章、音频却毫无反应（表现为「点了目录没播，要再点一次」）。
   Future<void> _startNewSession({int startSeconds = 0}) async {
     if (sessionRepo == null || _currentBook == null) return;
-    _activeSession = await sessionRepo!.create(
-      bookId: _currentBook!.id,
-      bookTitle: _currentBook!.title,
-      chapterIndex: _currentChapterIndex,
-      positionSeconds: startSeconds,
-      chapterCount: _chapters.length,
-      chapterTitle: _chapters[_currentChapterIndex].title,
-    );
+    try {
+      _activeSession = await sessionRepo!.create(
+        bookId: _currentBook!.id,
+        bookTitle: _currentBook!.title,
+        chapterIndex: _currentChapterIndex,
+        positionSeconds: startSeconds,
+        chapterCount: _chapters.length,
+        chapterTitle: _chapters[_currentChapterIndex].title,
+      );
+    } catch (e) {
+      debugPrint('[Player] 创建收听会话失败（不影响播放）: $e');
+    }
   }
 
   /// 章节加载完成后定位起始位置：续播位置优先，否则套用「跳过片头」。

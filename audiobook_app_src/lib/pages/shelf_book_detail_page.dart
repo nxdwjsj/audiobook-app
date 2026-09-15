@@ -124,7 +124,7 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
     if (index < 0 || _chapters.isEmpty || index >= _chapters.length) return;
 
     final targetPage = (index / _pageSize).floor();
-    void locateRow({int retriesLeft = 3}) {
+    void locateRow({int retriesLeft = 8, double extra = 0}) {
       if (!mounted) return;
       final key = _chapterRowKeys[index];
       final ctx = key?.currentContext;
@@ -137,14 +137,17 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
         );
         return;
       }
-      // 行还没被懒加载构建：按估算行高滚到附近（4 个 header 行 + 章节行），
-      // 行进入构建区后下一帧再精确对齐
+      // 行还没被懒加载构建：按行高把列表滚到目标附近，行进入构建范围后
+      // 再精确对齐。行高 48 = dense 单行 ListTile（标题 + trailing）；
+      // header 4 行高度差得远，粗略按 320 估，估算偏低时逐轮向下微调
+      // （cacheExtent 2000 兜底，邻近行都能被构建）。
       if (retriesLeft <= 0 || !_scrollController.hasClients) return;
-      final offset = (4 + index - _page * _pageSize) * 52.0 - 120;
-      _scrollController
-          .jumpTo(offset.clamp(0.0, _scrollController.position.maxScrollExtent));
-      WidgetsBinding.instance
-          .addPostFrameCallback((_) => locateRow(retriesLeft: retriesLeft - 1));
+      final offset =
+          320 + (index - _page * _pageSize) * 48.0 + extra - 120;
+      _scrollController.jumpTo(
+          offset.clamp(0.0, _scrollController.position.maxScrollExtent));
+      WidgetsBinding.instance.addPostFrameCallback(
+          (_) => locateRow(retriesLeft: retriesLeft - 1, extra: extra + 150));
     }
 
     if (targetPage != _page) {
@@ -280,7 +283,7 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
             );
           },
           // 添加缓存扩展以提高滚动性能
-          cacheExtent: 1000,
+          cacheExtent: 2000,
         ),
         // 聚合浮动小圆钮：点击展开竖排菜单（回顶/定位/排序），可拖动并记忆位置
         _ChapterFab(

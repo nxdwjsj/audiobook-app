@@ -649,8 +649,12 @@ class _ChapterSheet extends StatefulWidget {
 
 class _ChapterSheetState extends State<_ChapterSheet> {
   static const int pageSize = 300;
-  /// ListTile dense 实际行高（估算，用于把目标行「搬进」构建区）
-  static const double _rowExtent = 52.0;
+
+  /// 章节行高：dense 双行 ListTile 实为 64。
+  /// 列表显式指定 itemExtent（同一数值），「滚到第 N 行」的偏移因此可被
+  /// 精确计算——原先按 52 估算低估了约 20%，几百行后偏差累积到上万像素，
+  /// 目标行始终进不了懒加载的构建范围，表现为「打开目录定位不准」。
+  static const double _baseRowExtent = 64.0;
 
   final ScrollController _listController = ScrollController();
   final ScrollController _chipController = ScrollController();
@@ -691,8 +695,23 @@ class _ChapterSheetState extends State<_ChapterSheet> {
               0, widget.book.chapters.length - 1) / pageSize)
           .floor();
 
+  /// 系统字体放大时行高跟着变大，否则文字会被 itemExtent 裁掉。
+  double get _rowExtent {
+    final scale = MediaQuery.textScalerOf(context).scale(1.0).clamp(1.0, 1.4);
+    return _baseRowExtent * scale;
+  }
+
   void _locateCurrent() {
-    _locateCurrentInner(retriesLeft: 3);
+    _locateCurrentInner(retriesLeft: 12);
+  }
+
+  /// 延迟重试：面板入场动画期间列表视口尚未展开（maxScrollExtent 很小），
+  /// 此时 jumpTo 会被 clamp 到顶部，必须等动画结束再滚才准。
+  void _retryLocate(int retriesLeft) {
+    Future.delayed(
+      const Duration(milliseconds: 50),
+      () => _locateCurrentInner(retriesLeft: retriesLeft),
+    );
   }
 
   void _locateCurrentInner({required int retriesLeft}) {
@@ -700,15 +719,13 @@ class _ChapterSheetState extends State<_ChapterSheet> {
     if (widget.book.chapters.isEmpty) return;
     final index = widget.player.currentChapterIndex;
     if (index < 0 || index >= widget.book.chapters.length) return;
-    // 章节不在当前页 → 先切页，等下一帧行构建出来再滚
+    // 章节不在当前页 → 先切页，等行构建出来再滚
     if (_playingPage != _page) {
       setState(() => _page = _playingPage);
-      WidgetsBinding.instance
-          .addPostFrameCallback((_) => _locateCurrentInner(retriesLeft: retriesLeft));
+      _retryLocate(retriesLeft);
       return;
     }
-    final key = _rowKeys[index];
-    final ctx = key?.currentContext;
+    final ctx = _rowKeys[index]?.currentContext;
     if (ctx != null) {
       Scrollable.ensureVisible(
         ctx,
@@ -718,15 +735,17 @@ class _ChapterSheetState extends State<_ChapterSheet> {
       );
       return;
     }
-    // 目标行还没被构建（懒加载列表只构建视口附近）：
-    // 先按估算行高把列表滚到目标附近，让目标行进入构建区，下一帧再精确对齐
+    // 目标行还没被构建（懒加载列表只构建视口附近）：先按精确行高把列表滚到
+    // 目标上方，让目标行进入构建范围，随后 ensureVisible 精确对齐
     if (retriesLeft <= 0) return;
-    final offset = (index - _startIndex) * _rowExtent - 120;
-    if (_listController.hasClients) {
-      _listController.jumpTo(offset.clamp(0.0, _listController.position.maxScrollExtent));
-      WidgetsBinding.instance
-          .addPostFrameCallback((_) => _locateCurrentInner(retriesLeft: retriesLeft - 1));
+    if (!_listController.hasClients) {
+      _retryLocate(retriesLeft - 1);
+      return;
     }
+    final offset = (index - _startIndex) * _rowExtent - 120;
+    _listController
+        .jumpTo(offset.clamp(0.0, _listController.position.maxScrollExtent));
+    _retryLocate(retriesLeft - 1);
   }
 
   void _switchPage(int page) {
@@ -813,6 +832,8 @@ class _ChapterSheetState extends State<_ChapterSheet> {
           Expanded(
             child: ListView.builder(
               controller: _listController,
+              // 固定行高：让「滚到第 N 行」的偏移可精确计算（定位准）
+              itemExtent: _rowExtent,
               padding: const EdgeInsets.only(bottom: 12),
               itemCount: end - start,
               itemBuilder: (ctx, row) {

@@ -9,14 +9,24 @@ import '../repositories/book_source_repository.dart';
 import '../repositories/bookshelf_repository.dart';
 import '../services/audio_player_service.dart';
 import '../services/book_source/online_book_hit.dart';
+import '../services/cloud_drive_service.dart';
 import '../services/quark_drive_service.dart';
 import '../services/resource_search_service.dart';
 import '../services/storage_service.dart';
 import '../widgets/frosted_glass.dart';
 import '../widgets/throttled_navigator.dart';
 import 'book_source_page.dart';
+import 'drive_browser_page.dart';
+import 'shelf_book_detail_page.dart';
 
-/// 全网搜书：多渠道发现夸克网盘有声书分享，一键加入书架或直接播放。
+/// 搜索范围。搜索前可勾选，三路来源的结果分开展示、不会混在一起。
+enum _Scope { local, drive, online }
+
+/// 统一搜索页：一个入口搜「本地书架 / 我的网盘 / 网盘分享 / 在线听书」。
+///
+/// - 本地：书架里的书（内存过滤）
+/// - 网盘：我的网盘文件 + 书源发现的网盘分享链接
+/// - 在线：在线听书站（点开即听，无需转存）
 class ResourceSearchPage extends StatefulWidget {
   const ResourceSearchPage({super.key});
 
@@ -26,8 +36,23 @@ class ResourceSearchPage extends StatefulWidget {
 
 class _ResourceSearchPageState extends State<ResourceSearchPage> {
   final TextEditingController _keyword = TextEditingController();
-  final List<ResourceResult> _results = [];
-  final List<OnlineBookHit> _onlineHits = [];
+
+  /// 已勾选的搜索范围，默认三路全开。
+  final Set<_Scope> _scopes = {
+    _Scope.local,
+    _Scope.drive,
+    _Scope.online,
+  };
+
+  // --- 结果：按来源分区存放，互不混排 ---
+  final List<BookshelfBook> _shelfResults = []; // 本地书架
+  final List<DriveItem> _driveResults = []; // 我的网盘文件
+  final List<ResourceResult> _shareResults = []; // 网盘分享链接
+  final List<OnlineBookHit> _onlineHits = []; // 在线听书站
+
+  bool _driveLoading = false;
+  String? _driveError;
+
   String? _progress;
   bool _searching = false;
 
@@ -97,44 +122,112 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
       );
       return;
     }
+    if (_scopes.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请至少勾选一个搜索范围')),
+      );
+      return;
+    }
     FocusScope.of(context).unfocus();
     setState(() {
       _searching = true;
-      _results.clear();
+      _shelfResults.clear();
+      _driveResults.clear();
+      _shareResults.clear();
       _onlineHits.clear();
+      _driveError = null;
       _progress = '准备…';
     });
-    final service = context.read<ResourceSearchService>();
-    // 在线书源（听书网站）与夸克源并行搜索，先出的结果先展示
-    final onlineFuture = service.searchOnline(kw).then((hits) {
-      if (mounted) setState(() => _onlineHits.addAll(hits));
-    }).catchError((e) {
-      debugPrint('[ResourceSearch] online: $e');
-    });
-    final list = await service.search(
-      kw,
-      maxParse: 8,
-      onProgress: (m) {
-        if (mounted) setState(() => _progress = m);
-      },
-      // 边解析边出结果，首条结果几秒内就能看到。
-      onResult: (r) {
-        if (!mounted) return;
-        setState(() {
-          _results.add(r);
-          _results.sort(_compare);
-        });
-      },
-    );
-    await onlineFuture;
+
+    // 本地书架：内存过滤，无需等待
+    if (_scopes.contains(_Scope.local)) {
+      final q = kw.toLowerCase();
+      final shelf = context
+          .read<BookshelfRepository>()
+          .getAll()
+          .where((b) =>
+              b.title.toLowerCase().contains(q) ||
+              (b.author?.toLowerCase().contains(q) ?? false))
+          .toList();
+      if (mounted) setState(() => _shelfResults.addAll(shelf));
+    }
+
+    // 三路网络搜索并行，各自写入自己的分区
+    final tasks = <Future<void>>[];
+    if (_scopes.contains(_Scope.drive)) {
+      tasks.add(_searchDriveFiles(kw));
+      tasks.add(_searchShares(kw));
+    }
+    if (_scopes.contains(_Scope.online)) {
+      tasks.add(_searchOnline(kw));
+    }
+    await Future.wait(tasks);
+
     if (mounted) {
       setState(() {
-        _results
-          ..clear()
-          ..addAll(list);
         _searching = false;
         _progress = null;
       });
+    }
+  }
+
+  /// 我的网盘文件（夸克网盘 API 搜索）。
+  Future<void> _searchDriveFiles(String kw) async {
+    final drive = context.read<QuarkDriveService>();
+    if (drive.authStatus != AuthStatus.authenticated) {
+      if (mounted) setState(() => _driveError = '夸克网盘未登录');
+      return;
+    }
+    if (mounted) setState(() => _driveLoading = true);
+    try {
+      final results = await drive.searchFiles(kw);
+      if (mounted) setState(() => _driveResults.addAll(results));
+    } catch (e) {
+      if (mounted) setState(() => _driveError = '$e');
+    } finally {
+      if (mounted) setState(() => _driveLoading = false);
+    }
+  }
+
+  /// 网盘分享链接（书源发现，可转存后播放）。
+  Future<void> _searchShares(String kw) async {
+    final service = context.read<ResourceSearchService>();
+    try {
+      final list = await service.search(
+        kw,
+        maxParse: 8,
+        onProgress: (m) {
+          if (mounted) setState(() => _progress = m);
+        },
+        // 边解析边出结果，首条结果几秒内就能看到。
+        onResult: (r) {
+          if (!mounted) return;
+          setState(() {
+            _shareResults.add(r);
+            _shareResults.sort(_compare);
+          });
+        },
+      );
+      if (mounted) {
+        setState(() {
+          _shareResults
+            ..clear()
+            ..addAll(list);
+        });
+      }
+    } catch (e) {
+      debugPrint('[Search] 网盘分享: $e');
+    }
+  }
+
+  /// 在线听书站（无需转存，点开即听）。
+  Future<void> _searchOnline(String kw) async {
+    final service = context.read<ResourceSearchService>();
+    try {
+      final hits = await service.searchOnline(kw);
+      if (mounted) setState(() => _onlineHits.addAll(hits));
+    } catch (e) {
+      debugPrint('[Search] 在线听书: $e');
     }
   }
 
@@ -247,7 +340,7 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('全网搜书'),
+        title: const Text('搜索'),
         actions: [
           // 书源管理入口：显示当前启用数
           IconButton(
@@ -291,37 +384,51 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
               ],
             ),
           ),
-          // 转存到网盘的哪个目录（点一下可更换，选择会被记住）
+          // 搜索范围：本地 / 网盘 / 在线，搜索前可自由勾选
           Padding(
-            padding: const EdgeInsets.fromLTRB(18, 0, 18, 4),
-            child: InkWell(
-              onTap: _shelvingKey != null ? null : _pickSaveDir,
-              borderRadius: BorderRadius.circular(8),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  children: [
-                    Icon(Icons.drive_file_move_outline,
-                        size: 16, color: Theme.of(context).colorScheme.primary),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        '保存到：$_saveDirName',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ),
-                    Text(
-                      '更换',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 2),
+            child: Wrap(
+              spacing: 8,
+              children: [
+                _scopeChip(_Scope.local, '本地书架', Icons.library_books_rounded),
+                _scopeChip(_Scope.drive, '网盘', Icons.cloud_rounded),
+                _scopeChip(_Scope.online, '在线听书', Icons.headphones_rounded),
+              ],
+            ),
+          ),
+          // 转存到网盘的哪个目录（仅网盘分享用得到，点一下可更换，选择会被记住）
+          if (_scopes.contains(_Scope.drive))
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 0, 18, 4),
+              child: InkWell(
+                onTap: _shelvingKey != null ? null : _pickSaveDir,
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    children: [
+                      Icon(Icons.drive_file_move_outline,
+                          size: 16,
                           color: Theme.of(context).colorScheme.primary),
-                    ),
-                  ],
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          '保存到：$_saveDirName',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+                      Text(
+                        '更换',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(context).colorScheme.primary),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
           if (_progress != null)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -333,22 +440,189 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
                 ),
               ),
             ),
-          Expanded(
-            child: _results.isEmpty && _onlineHits.isEmpty && !_searching
-                ? const Center(
-                    child: Text('从夸克网盘分享 / 在线听书站搜索有声书\n结果可加入书架或直接播放',
-                        textAlign: TextAlign.center))
-                : ListView.builder(
-                    // 在线书源命中放最前（点击即播，不用转存网盘）
-                    itemCount: _onlineHits.length + _results.length,
-                    itemBuilder: (context, i) => i < _onlineHits.length
-                        ? _buildOnlineCard(_onlineHits[i])
-                        : _buildCard(_results[i - _onlineHits.length]),
-                  ),
+          Expanded(child: _buildResults()),
+        ],
+      ),
+    );
+  }
+
+  /// 搜索范围勾选 chip（可多选）。
+  Widget _scopeChip(_Scope scope, String label, IconData icon) {
+    final selected = _scopes.contains(scope);
+    return FilterChip(
+      avatar: Icon(icon, size: 16),
+      label: Text(label),
+      selected: selected,
+      visualDensity: VisualDensity.compact,
+      onSelected: _searching
+          ? null
+          : (v) => setState(() {
+                if (v) {
+                  _scopes.add(scope);
+                } else {
+                  _scopes.remove(scope);
+                }
+              }),
+    );
+  }
+
+  /// 结果区：按来源分成四个分区，先本地、再网盘（文件 + 分享）、最后在线。
+  Widget _buildResults() {
+    final noResult = _shelfResults.isEmpty &&
+        _driveResults.isEmpty &&
+        _shareResults.isEmpty &&
+        _onlineHits.isEmpty;
+    if (noResult && _searching) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (noResult) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: 32),
+          child: Text(
+            '一个入口搜全部：本地书架 / 我的网盘 / 网盘分享 / 在线听书\n'
+            '三路结果分开显示，不会混在一起',
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 24),
+      children: [
+        // 1. 本地书架
+        if (_scopes.contains(_Scope.local)) ...[
+          _sectionHeader(
+              Icons.library_books_rounded, '本地书架', _shelfResults.length),
+          if (_shelfResults.isEmpty)
+            _emptyHint('书架中没有匹配的书')
+          else
+            ..._shelfResults.map(_buildShelfTile),
+        ],
+        // 2. 我的网盘文件
+        if (_scopes.contains(_Scope.drive)) ...[
+          _sectionHeader(Icons.folder_rounded, '我的网盘', _driveResults.length),
+          if (_driveLoading)
+            const Padding(
+              padding: EdgeInsets.all(20),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (_driveError != null)
+            _emptyHint('网盘搜索失败：$_driveError')
+          else if (_driveResults.isEmpty)
+            _emptyHint('网盘中没有匹配的文件')
+          else
+            ..._driveResults.map(_buildDriveTile),
+          // 3. 网盘分享链接
+          _sectionHeader(Icons.link_rounded, '网盘分享', _shareResults.length),
+          if (_searching && _shareResults.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(20),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (_shareResults.isEmpty)
+            _emptyHint('没有发现相关的网盘分享')
+          else
+            ..._shareResults.map(_buildCard),
+        ],
+        // 4. 在线听书站
+        if (_scopes.contains(_Scope.online)) ...[
+          _sectionHeader(Icons.headphones_rounded, '在线听书', _onlineHits.length),
+          if (_searching && _onlineHits.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(20),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (_onlineHits.isEmpty)
+            _emptyHint('在线书源没有搜到相关有声书')
+          else
+            ..._onlineHits.map(_buildOnlineCard),
+        ],
+      ],
+    );
+  }
+
+  Widget _sectionHeader(IconData icon, String label, int count) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: scheme.primary),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: Theme.of(context)
+                .textTheme
+                .titleSmall
+                ?.copyWith(fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '$count',
+            style: Theme.of(context)
+                .textTheme
+                .bodySmall
+                ?.copyWith(color: scheme.onSurfaceVariant),
           ),
         ],
       ),
     );
+  }
+
+  Widget _emptyHint(String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+      child: Text(
+        text,
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+      ),
+    );
+  }
+
+  Widget _buildShelfTile(BookshelfBook b) {
+    return ListTile(
+      leading: const Icon(Icons.menu_book_rounded),
+      title: Text(b.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text('${b.chapterCount} 集'),
+      onTap: () => context.pushThrottled(MaterialPageRoute(
+        builder: (_) => ShelfBookDetailPage(book: b),
+      )),
+    );
+  }
+
+  Widget _buildDriveTile(DriveItem item) {
+    return ListTile(
+      leading: Icon(
+        item.isDir ? Icons.folder_rounded : Icons.audio_file_rounded,
+        color: item.isDir ? Colors.amber.shade700 : null,
+      ),
+      title: Text(item.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text(item.path, maxLines: 1, overflow: TextOverflow.ellipsis),
+      onTap: () => _openDriveItem(item),
+    );
+  }
+
+  /// 网盘搜索结果点开：目录进目录、音频进所在目录（可加入书架）。
+  void _openDriveItem(DriveItem item) {
+    if (item.isDir) {
+      context.pushThrottled(MaterialPageRoute(
+        builder: (_) => DriveBrowserPage(
+          initialDrive: DriveType.quark,
+          initialPath: item.path,
+          initialDirFid: item.fileId,
+        ),
+      ));
+    } else {
+      context.pushThrottled(MaterialPageRoute(
+        builder: (_) => DriveBrowserPage(
+          initialDrive: DriveType.quark,
+          initialPath: item.parentPath,
+        ),
+      ));
+    }
   }
 
   /// 在线书源命中的书 id：online_{书源id}_{详情页路径}
