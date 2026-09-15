@@ -612,7 +612,7 @@ class BookSourceEngine {
   /// 响应可能是 JSON（如 B 站搜索接口）：按规则拼出待提取的纯文本。
   String _extractText(String raw) {
     final path = source.jsonToArray;
-    if (path == null || path.isEmpty) return raw;
+    if (path == null || path.isEmpty) return _normalizeJson(raw);
     try {
       dynamic node = jsonDecode(raw);
       for (final seg in path.split('.')) {
@@ -640,4 +640,20 @@ class BookSourceEngine {
 
   Future<void> _sleep() => Future.delayed(
       Duration(milliseconds: source.delayMs + Random().nextInt(150)));
+
+  /// 接口返回的 JSON 里，中文常写成 \uXXXX、斜杠写成 \/（PHP json_encode 的
+  /// 默认行为）。不先解开会出现两个问题：
+  /// - 书名直接显示成「\u4ece\u9f99\u65cf\u5f00\u59cb」
+  /// - URL 里的 \/ 会让 Uri 把路径段当成主机名（Failed host lookup）
+  /// Dart 的 jsonDecode 会正常还原，jsonEncode 又不会把非 ASCII 重新转义，
+  /// 所以「解码再编码」等于拿到未转义的原文。
+  String _normalizeJson(String raw) {
+    final head = raw.trimLeft();
+    if (head.isEmpty || (head[0] != '{' && head[0] != '[')) return raw;
+    try {
+      return jsonEncode(jsonDecode(raw));
+    } catch (_) {
+      return raw;
+    }
+  }
 }

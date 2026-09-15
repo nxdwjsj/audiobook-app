@@ -167,6 +167,51 @@ const List<BookSource> kBuiltinBookSources = [
     onlineAudioPattern: r'''(?:src|url|mp3|m4a|audio|source)["']?\s*[:=]\s*["']?(https?://[^"'\s<>\\]+\.(?:mp3|m4a|aac|ogg|opus)(?:\?[^"'\s<>\\]*)?)''',
     browserFetch: true,
   ),
+
+  // ------------------------------------------------------------------
+  // 275 听书（m.i275.com）
+  //
+  // 无 JS 挑战、无接口：搜索与详情页都是服务端渲染，普通 HTTP 就能抓。
+  // 唯一要求：播放页必须先有会话 Cookie（直接请求会 302 回首页），
+  // 引擎的 Cookie jar 会在抓详情页时自动收下 PHPSESSID。
+  // ------------------------------------------------------------------
+  BookSource(
+    id: 'i275',
+    name: '275听书',
+    type: 'online',
+    queries: 'full',
+    urlTemplate: 'https://m.i275.com/search.php?q={{key}}',
+    headers: {
+      // 站点是移动站，用移动 UA 保证拿到同一套服务端渲染结构
+      'User-Agent': 'Mozilla/5.0 (Linux; Android 13; SM-S9010) '
+          'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 '
+          'Mobile Safari/537.36',
+    },
+    // 搜索结果：<a href="/book/138.html" class="flex p-4 …">
+    //              <img … alt="龙族">…<h3 class="…truncate">龙族</h3>
+    onlineBookPattern:
+        r'<a href="(/book/\d+\.html)" class="flex p-4[\s\S]{0,900}?<h3[^>]*>([^<]+)</h3>',
+    onlineBookTitleGroup: 2,
+    onlineBookUrlGroup: 1,
+    maxLinks: 10,
+    delayMs: 150,
+    // 详情页一页给全（实测 1100+ 集，无需翻页）：
+    // <a id="chapter-pos-1" href="/play/138/198329.html" class="…">
+    //   <span class="…w-10">1.</span>
+    //   <span class="text-sm text-gray-700 truncate">正文在↓下面</span>
+    onlineChapterPattern:
+        r'<a id="chapter-pos-\d+"\s*href="(/play/\d+/\d+\.html)"[\s\S]{0,400}?<span class="text-sm text-gray-700 truncate">([^<]+)</span>',
+    onlineChapterTitleGroup: 2,
+    onlineChapterUrlGroup: 1,
+    onlineChapterOrder: 'asc',
+    // 播放页 APlayer 初始化里的音频地址（注意是 http，且斜杠被转义成 \/）：
+    // url: "http:\/\/audiopay.cos.tx.xmcdn.com\/…\/xxx-aacv2-48K.m4a?sign=…"
+    onlineAudioPattern:
+        r'url:\s*"(https?:(?:\\?/){2}[^"]+\.(?:m4a|mp3|aac|ogg)[^"]*)"',
+    // 抓详情页/播放页时带站点 Referer（音频本身在腾讯云 COS，
+    // 签名参数已带授权，播放时不需要 Referer）
+    onlineReferer: 'https://m.i275.com/',
+  ),
 ];
 
 /// 内置源的 id 集合。

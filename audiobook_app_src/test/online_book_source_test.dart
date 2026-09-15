@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:audiobook_app/services/book_source/book_source.dart';
 import 'package:audiobook_app/services/book_source/book_source_engine.dart';
+import 'package:audiobook_app/services/book_source/online_book_hit.dart';
 
 void main() {
   group('BookSource online 型模型', () {
@@ -231,6 +234,26 @@ void main() {
       expect(m.group(2), '/youshengxiaoshuo/38968/');
     });
 
+    test('PHP 风格 JSON 转义（\\uXXXX 与 \\/）归一化后才能正确解析', () {
+      // 站点实际返回：中文是 \uXXXX、斜杠是 \/
+      const raw = '{"novel":{"name":"\\u4ece\\u9f99\\u65cf\\u5f00\\u59cb",'
+          '"cover":"https:\\/\\/image.itingshu.net\\/cover\\/x.gif",'
+          '"url":"\\/youshengxiaoshuo\\/38968\\/"}}';
+      // 引擎内部会先做一次「解码再编码」归一化
+      final normalized = jsonEncode(jsonDecode(raw));
+      final m = RegExp(t13Source.onlineBookPattern!).firstMatch(normalized);
+      expect(m, isNotNull);
+      expect(m!.group(1), '从龙族开始');
+      // 归一化 + resolveUrl 后应得到正确的绝对地址（而不是把路径段当主机名）
+      expect(resolveUrl(t13Source.urlTemplate, m.group(2)!),
+          'https://m.ting13.cc/youshengxiaoshuo/38968/');
+    });
+
+    test('resolveUrl 还原被转义的斜杠', () {
+      expect(resolveUrl('https://m.i275.com/a/b.html', r'\/book\/138.html'),
+          'https://m.i275.com/book/138.html');
+    });
+
     test('详情页能抠出完整目录链接', () {
       final m = RegExp(t13Source.onlineDirPattern!).firstMatch(
           '<span class="more fr"><a href="/tingdirs/UBuaOrJc/cbbhASajUEujOrEd.html"'
@@ -294,6 +317,88 @@ void main() {
         }),
         throwsFormatException,
       );
+    });
+  });
+
+  group('275 听书（i275）真实结构', () {
+    const i275Source = BookSource(
+      id: 'i275',
+      name: '275听书',
+      type: 'online',
+      urlTemplate: 'https://m.i275.com/search.php?q={{key}}',
+      onlineBookPattern:
+          r'<a href="(/book/\d+\.html)" class="flex p-4[\s\S]{0,900}?<h3[^>]*>([^<]+)</h3>',
+      onlineBookTitleGroup: 2,
+      onlineBookUrlGroup: 1,
+      onlineChapterPattern:
+          r'<a id="chapter-pos-\d+"\s*href="(/play/\d+/\d+\.html)"[\s\S]{0,400}?<span class="text-sm text-gray-700 truncate">([^<]+)</span>',
+      onlineChapterTitleGroup: 2,
+      onlineChapterUrlGroup: 1,
+      onlineChapterOrder: 'asc',
+      onlineAudioPattern:
+          r'url:\s*"(https?:(?:\\?/){2}[^"]+\.(?:m4a|mp3|aac|ogg)[^"]*)"',
+      onlineReferer: 'https://m.i275.com/',
+    );
+
+    test('搜索结果项：链接 + <h3> 书名', () {
+      const html = '''
+      <div class="divide-y divide-gray-100">
+        <a href="/book/138.html" class="flex p-4 gap-4 active:bg-gray-50 transition">
+          <div class="w-20 h-28 flex-shrink-0 shadow-md rounded-md overflow-hidden bg-gray-100">
+            <img src="https://imagev2.xmcdn.com/x.jpeg" class="w-full h-full object-cover" alt="龙族">
+          </div>
+          <div class="flex-1 min-w-0">
+            <h3 class="text-base font-bold text-gray-800 truncate">龙族</h3>
+      ''';
+      final m = RegExp(i275Source.onlineBookPattern!).firstMatch(html);
+      expect(m, isNotNull);
+      expect(m!.group(1), '/book/138.html');
+      expect(m.group(2), '龙族');
+    });
+
+    test('详情页章节：一页全量、正序、标题取 truncate 那个 span', () {
+      final engine = BookSourceEngine(i275Source);
+      final detail = engine.parseOnlineDetail('''
+        <a id="chapter-pos-1"
+           href="/play/138/198329.html"
+           class="p-4 flex items-center hover:bg-gray-50 transition active:bg-gray-100">
+          <span class="text-xs text-gray-400 w-10">1.</span>
+          <span class="text-sm text-gray-700 truncate">正文在↓下面</span>
+          <svg class="h-4 w-4 ml-auto text-gray-300"></svg>
+        </a>
+        <a id="chapter-pos-2"
+           href="/play/138/198330.html"
+           class="p-4 flex items-center hover:bg-gray-50 transition active:bg-gray-100">
+          <span class="text-xs text-gray-400 w-10">2.</span>
+          <span class="text-sm text-gray-700 truncate">第001集_康斯坦丁</span>
+        </a>
+      ''', 'https://m.i275.com/book/138.html');
+      expect(detail.chapters.length, 2);
+      expect(detail.chapters[0].url, 'https://m.i275.com/play/138/198329.html');
+      expect(detail.chapters[0].title, '正文在↓下面');
+      expect(detail.chapters[1].title, '第001集_康斯坦丁');
+    });
+
+    test('播放页音频：http 且斜杠转义，也能还原成可用直链', () {
+      const html = r'''
+        const ap = new APlayer({
+            container: document.getElementById('aplayer'),
+            audio: [{
+                name: "\u6b63\u6587\u5728\u2193\u4e0b\u9762",
+                artist: "\u9f99\u65cf",
+                url: "http:\/\/audiopay.cos.tx.xmcdn.com\/download\/1.0.0\/storages\/91e1-audiopay\/5F\/4A\/GKwRIasGz2ovAB6LqQGSYSOl-aacv2-48K.m4a?sign=bff688341108c024046492a16728b1b5&buy_key=FM&token=7961&timestamp=1789490820&duration=247",
+                cover: "https:\/\/imagev2.xmcdn.com\/x.jpeg"
+            }],
+            autoplay: !isIOS
+        });
+      ''';
+      final m = RegExp(i275Source.onlineAudioPattern!).firstMatch(html);
+      expect(m, isNotNull);
+      final audio = resolveUrl(
+          'https://m.i275.com/play/138/198329.html', m!.group(1)!);
+      expect(audio, startsWith('http://audiopay.cos.tx.xmcdn.com/'));
+      expect(audio, contains('-48K.m4a?sign='));
+      expect(audio, isNot(contains(r'\')));
     });
   });
 }

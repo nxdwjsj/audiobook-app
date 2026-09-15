@@ -1,7 +1,7 @@
 name: audiobook_app
 description: 聆云 - 网盘有声书播放器（直接播放网盘音频文件夹，管理目录、进度与收听历史）
 publish_to: 'none'
-version: 1.0.14+15
+version: 1.0.15+16
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

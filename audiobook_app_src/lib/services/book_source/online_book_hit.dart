@@ -43,10 +43,13 @@ String decodeHtmlEntities(String? s) {
 
 /// 相对 URL → 绝对 URL（相对详情页所在目录）。
 String resolveUrl(String base, String maybeRelative) {
-  final u = Uri.tryParse(maybeRelative);
-  if (u == null) return maybeRelative;
-  if (u.isAbsolute) return maybeRelative;
-  return Uri.parse(base).resolve(maybeRelative).toString();
+  // 接口 JSON 里斜杠常被转义成 \/（PHP json_encode 的默认行为），先还原：
+  // 否则 Uri 会把第一段路径当成主机名（报 Failed host lookup）
+  final rel = maybeRelative.replaceAll(r'\/', '/');
+  final u = Uri.tryParse(rel);
+  if (u == null) return rel;
+  if (u.isAbsolute) return rel;
+  return Uri.parse(base).resolve(rel).toString();
 }
 
 /// 把一个详情页 JSON 转回 [OnlineBookHit]（书架缓存用）。

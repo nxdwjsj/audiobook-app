@@ -892,8 +892,11 @@ class AudioPlayerService extends ChangeNotifier {
         notifyListeners();
         return;
       }
-      // 旧直链（含预加载缓存）大概率已失效，丢弃重新解析
+      // 旧直链（含预加载缓存）大概率已失效，丢弃重新解析；
+      // 在线书源的音频地址多数带时效签名（sign/timestamp），
+      // 不清掉的话重试多少次拿到的还是那个过期地址
       _resolvedCache.clear();
+      _onlineAudioCache.clear();
       _preloadedForFileId = null;
       await _loadCurrentChapter();
       if (lastError == null) {
