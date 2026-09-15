@@ -38,9 +38,6 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
   static const int _pageSize = 300;
   int _page = 0;
 
-  /// 浮动工具条位置（null = 默认右下角）。拖动后持久化。
-  Offset? _toolbarOffset;
-
   /// 行 key：分页 + 精确定位都靠它做 ensureVisible。
   final Map<int, GlobalKey> _chapterRowKeys = {};
 
@@ -52,7 +49,6 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
   @override
   void initState() {
     super.initState();
-    _toolbarOffset = context.read<StorageService>().getChapterToolbarOffset();
     // 章节列表渲染后定位到正在播放的章节
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToPlaying());
   }
@@ -92,7 +88,7 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
     return (index / _pageSize).floor();
   }
 
-  /// 定位到正在播放章节（首次进入自动执行；工具条按钮可强制触发）。
+  /// 定位到正在播放章节（首次进入自动执行；浮动按钮可强制触发）。
   /// 分页视图：切到所在页，再用 ensureVisible 滚到该行（不估算行高）。
   void _scrollToPlaying({bool force = false}) {
     if (!mounted) return;
@@ -126,32 +122,6 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
     } else {
       locateRow();
     }
-  }
-
-  /// 拖动工具条：onPanUpdate 累计偏移，出界会被 LayoutBuilder 夹紧。
-  void _onToolbarPan(DragUpdateDetails d, BoxConstraints constraints) {
-    setState(() {
-      final size = MediaQuery.of(context).size;
-      const half = 70.0; // 工具条半宽（约）
-      var dx = (_toolbarOffset ?? _defaultToolbarOffset()).dx + d.delta.dx;
-      var dy = (_toolbarOffset ?? _defaultToolbarOffset()).dy + d.delta.dy;
-      dx = dx.clamp(0.0, (size.width - half * 2).clamp(0.0, double.infinity));
-      dy = dy.clamp(0.0, (size.height - 120).clamp(0.0, double.infinity));
-      _toolbarOffset = Offset(dx, dy);
-    });
-  }
-
-  /// 默认工具条位置：右下角（16, 屏高 - 200）。
-  Offset _defaultToolbarOffset() {
-    final size = MediaQuery.of(context).size;
-    return Offset(size.width - 160, size.height - 200);
-  }
-
-  Future<void> _persistToolbar() async {
-    if (_toolbarOffset == null) return;
-    await context
-        .read<StorageService>()
-        .saveChapterToolbarOffset(_toolbarOffset!);
   }
 
   @override
@@ -213,84 +183,83 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
     final chapters = _displayChapters;
     // 头部信息（封面/简介）+ 统计 + 目录标题（+分页条）+ 当前页章节行
     const headerCount = 4; // header + stats + 目录标题 + 分页条
-    return LayoutBuilder(builder: (context, constraints) {
-      return Stack(
-        children: [
-          ListView.builder(
-            controller: _scrollController,
-            // 底部留出浮动按钮组的空间，避免最后一行被遮挡
-            padding: const EdgeInsets.only(bottom: 80),
-            itemCount: headerCount + chapters.length,
-            itemBuilder: (context, index) {
-              if (index == 0) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildHeader(context),
-                    if (_book.description != null &&
-                        _book.description!.isNotEmpty)
-                      _buildDescription(context),
-                  ],
-                );
-              }
-              if (index == 1) return _buildStatsRow(context, progress);
-              if (index == 2) return _buildChapterTitle(context, _chapters.length);
-              if (index == 3) return _buildPageSelector(context);
-              final rowIndex = index - headerCount;
-              // 当前页数据已应用排序，映射回真实章节下标
-              final pageStart = _page * _pageSize;
-              final chapterIndex = _descending
-                  ? _chapters.length - 1 - (pageStart + rowIndex)
-                  : pageStart + rowIndex;
-              final chapter = chapters[rowIndex];
-              final isPlayingChapter =
-                  isCurrent && chapterIndex == player.currentChapterIndex;
-              return ListTile(
-                key: _chapterRowKeys[chapterIndex] ??= GlobalKey(),
-                dense: true,
-                leading: isPlayingChapter
-                    ? Icon(Icons.graphic_eq_rounded,
-                        color: Theme.of(context).colorScheme.primary)
-                    : Text('${chapterIndex + 1}'),
-                title: Text(
-                  chapter.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontWeight:
-                        isPlayingChapter ? FontWeight.bold : FontWeight.normal,
-                    color: isPlayingChapter
-                        ? Theme.of(context).colorScheme.primary
-                        : null,
-                  ),
-                ),
-                trailing: isPlayingChapter
-                    ? Text(
-                        '正在播放',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
-                      )
-                    : null,
-                onTap: () => _playChapter(context, chapterIndex),
+    return Stack(
+      children: [
+        ListView.builder(
+          controller: _scrollController,
+          // 底部留出浮动按钮组的空间，避免最后一行被遮挡
+          padding: const EdgeInsets.only(bottom: 80),
+          itemCount: headerCount + chapters.length,
+          itemBuilder: (context, index) {
+            if (index == 0) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildHeader(context),
+                  if (_book.description != null &&
+                      _book.description!.isNotEmpty)
+                    _buildDescription(context),
+                ],
               );
-            },
-          ),
-          // 浮动目录工具条：可拖到任意位置（松手持久化），默认右下角
-          Positioned(
-            left: (_toolbarOffset ?? _defaultToolbarOffset()).dx,
-            top: (_toolbarOffset ?? _defaultToolbarOffset()).dy,
-            child: GestureDetector(
-              // 拖动本体 = 移动工具条；按钮点击不受影响（子级手势优先）
-              onPanUpdate: (d) => _onToolbarPan(d, constraints),
-              onPanEnd: (_) => _persistToolbar(),
-              child: _buildFloatingChapterToolbar(context, _chapters.length),
-            ),
-          ),
-        ],
-      );
-    });
+            }
+            if (index == 1) return _buildStatsRow(context, progress);
+            if (index == 2) return _buildChapterTitle(context, _chapters.length);
+            if (index == 3) return _buildPageSelector(context);
+            final rowIndex = index - headerCount;
+            // 当前页数据已应用排序，映射回真实章节下标
+            final pageStart = _page * _pageSize;
+            final chapterIndex = _descending
+                ? _chapters.length - 1 - (pageStart + rowIndex)
+                : pageStart + rowIndex;
+            final chapter = chapters[rowIndex];
+            final isPlayingChapter =
+                isCurrent && chapterIndex == player.currentChapterIndex;
+            return ListTile(
+              key: _chapterRowKeys[chapterIndex] ??= GlobalKey(),
+              dense: true,
+              leading: isPlayingChapter
+                  ? Icon(Icons.graphic_eq_rounded,
+                      color: Theme.of(context).colorScheme.primary)
+                  : Text('${chapterIndex + 1}'),
+              title: Text(
+                chapter.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontWeight:
+                      isPlayingChapter ? FontWeight.bold : FontWeight.normal,
+                  color: isPlayingChapter
+                      ? Theme.of(context).colorScheme.primary
+                      : null,
+                ),
+              ),
+              trailing: isPlayingChapter
+                  ? Text(
+                      '正在播放',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    )
+                  : null,
+              onTap: () => _playChapter(context, chapterIndex),
+            );
+          },
+        ),
+        // 聚合浮动小圆钮：点击展开竖排菜单（回顶/定位/排序），可拖动并记忆位置
+        _ChapterFab(
+          scrollController: _scrollController,
+          descending: _descending,
+          onLocate: () => _scrollToPlaying(force: true),
+          onToggleOrder: () {
+            setState(() => _descending = !_descending);
+            if (_scrollController.hasClients) {
+              _scrollController.jumpTo(0);
+            }
+          },
+        ),
+      ],
+    );
   }
 
   /// 目录标题行（仅标题，按钮在浮动工具条上）。
@@ -334,50 +303,6 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
             ),
           );
         },
-      ),
-    );
-  }
-
-  /// 浮动目录工具条：回顶部 / 定位正在播放 / 正倒序切换，悬浮于列表右下角。
-  Widget _buildFloatingChapterToolbar(BuildContext context, int chapterCount) {
-    return Card(
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.vertical_align_top_rounded),
-              tooltip: '回到顶部',
-              onPressed: () => _scrollController.hasClients
-                  ? _scrollController.animateTo(
-                      0,
-                      duration: const Duration(milliseconds: 400),
-                      curve: Curves.easeOutCubic,
-                    )
-                  : null,
-            ),
-            IconButton(
-              icon: const Icon(Icons.my_location_rounded),
-              tooltip: '定位到正在播放',
-              onPressed: () => _scrollToPlaying(force: true),
-            ),
-            IconButton(
-              icon: Icon(_descending
-                  ? Icons.south_rounded
-                  : Icons.north_rounded),
-              tooltip: _descending ? '当前：最新在前，点击改为第 1 集在前' : '当前：第 1 集在前，点击改为最新在前',
-              onPressed: () {
-                setState(() => _descending = !_descending);
-                if (_scrollController.hasClients) {
-                  _scrollController.jumpTo(0);
-                }
-              },
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -613,6 +538,200 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
       _toPlayBook(),
       startChapter: chapterIndex,
       startPosition: Duration(seconds: positionSeconds),
+    );
+  }
+}
+
+/// 目录聚合浮动小圆钮（独立 State，拖动只重绘自身，不重建整页列表）：
+/// - 单击展开竖排菜单：回顶部 / 定位正在播放 / 正倒序切换
+/// - 长按整钮可拖动换位置（松手持久化），菜单展开时拖动无效
+/// - 默认悬浮于右下角
+class _ChapterFab extends StatefulWidget {
+  final ScrollController scrollController;
+  final bool descending;
+  final VoidCallback onLocate;
+  final VoidCallback onToggleOrder;
+
+  const _ChapterFab({
+    required this.scrollController,
+    required this.descending,
+    required this.onLocate,
+    required this.onToggleOrder,
+  });
+
+  @override
+  State<_ChapterFab> createState() => _ChapterFabState();
+}
+
+class _ChapterFabState extends State<_ChapterFab> {
+  static const double fabSize = 44;
+
+  /// null = 默认右下角
+  Offset? _offset;
+  bool _menuOpen = false;
+  bool _initialized = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_initialized) return;
+    _offset = context.read<StorageService>().getChapterToolbarOffset();
+    _initialized = true;
+  }
+
+  Offset _defaultOffset(Size size) =>
+      Offset(size.width - fabSize - 16, size.height - 260);
+
+  void _onPan(DragUpdateDetails d) {
+    // 菜单展开时不允许拖（避免菜单和按钮错位）
+    if (_menuOpen) return;
+    setState(() {
+      final size = MediaQuery.of(context).size;
+      var dx = (_offset ?? _defaultOffset(size)).dx + d.delta.dx;
+      var dy = (_offset ?? _defaultOffset(size)).dy + d.delta.dy;
+      dx = dx.clamp(0.0, size.width - fabSize);
+      dy = dy.clamp(0.0, size.height - fabSize - 80);
+      _offset = Offset(dx, dy);
+    });
+  }
+
+  Future<void> _persist() async {
+    if (_offset == null) return;
+    await context
+        .read<StorageService>()
+        .saveChapterToolbarOffset(_offset!);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    final pos = _offset ?? _defaultOffset(size);
+    final scheme = Theme.of(context).colorScheme;
+
+    return Stack(
+      children: [
+        // 展开时局部遮罩：点一下收起菜单
+        if (_menuOpen)
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => setState(() => _menuOpen = false),
+              child: Container(color: Colors.black.withValues(alpha: 0.15)),
+            ),
+          ),
+        // 竖排菜单（按钮自下而上，紧贴小圆钮上方；顶部放不下时改放下方）
+        if (_menuOpen)
+          Positioned(
+            left: pos.dx.clamp(0.0, size.width - 132),
+            top: (pos.dy - 3 * (fabSize + 10) - 8).clamp(
+                8.0, (pos.dy + fabSize + 8).clamp(8.0, double.infinity)),
+            child: _buildMenu(context, scheme),
+          ),
+        // 小圆钮本体
+        Positioned(
+          left: pos.dx,
+          top: pos.dy,
+          child: GestureDetector(
+            onPanUpdate: _onPan,
+            onPanEnd: (_) => _persist(),
+            onTap: () => setState(() => _menuOpen = !_menuOpen),
+            child: Container(
+              width: fabSize,
+              height: fabSize,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: scheme.primaryContainer,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.25),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Icon(
+                _menuOpen
+                    ? Icons.close_rounded
+                    : Icons.my_location_rounded,
+                color: scheme.onPrimaryContainer,
+                size: 22,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMenu(BuildContext context, ColorScheme scheme) {
+    Widget item(IconData icon, String label, VoidCallback onTap) {
+      return Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(22),
+          onTap: () {
+            setState(() => _menuOpen = false);
+            onTap();
+          },
+          child: Container(
+            width: 116,
+            height: fabSize,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              color: scheme.surface,
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(
+                  color: scheme.outlineVariant.withValues(alpha: 0.5)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.15),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                Icon(icon, size: 20, color: scheme.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        item(
+          Icons.vertical_align_top_rounded,
+          '回到顶部',
+          () => widget.scrollController.hasClients
+              ? widget.scrollController.animateTo(
+                  0,
+                  duration: const Duration(milliseconds: 400),
+                  curve: Curves.easeOutCubic,
+                )
+              : null,
+        ),
+        const SizedBox(height: 10),
+        item(Icons.my_location_rounded, '定位播放', widget.onLocate),
+        const SizedBox(height: 10),
+        item(
+          widget.descending ? Icons.south_rounded : Icons.north_rounded,
+          widget.descending ? '改为正序' : '改为倒序',
+          widget.onToggleOrder,
+        ),
+      ],
     );
   }
 }
