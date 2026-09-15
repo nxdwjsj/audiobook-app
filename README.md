@@ -10,10 +10,10 @@
 一个 Flutter 有声书播放器（主用 Android 真机），核心能力是**直接播放网盘里的音频文件夹**，把网盘文件夹当作一本书来管理（目录、进度、续播、历史）。
 
 - 应用名：`audiobook_app`，显示名「聆云」
-- 版本：`1.0.5+6`
+- 版本：`1.0.6+7`
 - 平台目录：`android/`（主力）、`ios/`、`web/`（未验证）
-- **下载安装**：[Releases · 最新版](https://github.com/nxdwjsj/audiobook-app/releases/latest) → 点 `lingyun-v1.0.5.apk` 直接下载安装（release 构建、debug 签名、通用包；约 56MB）
-- 仓库内另有副本：`releases/lingyun-v1.0.5.apk`
+- **下载安装**：[Releases · 最新版](https://github.com/nxdwjsj/audiobook-app/releases/latest) → 点 `lingyun-v1.0.6.apk` 直接下载安装（release 构建、debug 签名、通用包；约 56MB）
+- 仓库内另有副本：`releases/lingyun-v1.0.6.apk`
 
 **技术栈**
 
@@ -215,11 +215,13 @@ box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `li
   （无进度从头播、正在播该书则跳播放页）
 - **书籍详情页**：封面（无封面时按书名哈希生成渐变占位图）、作者/简介、统计行、
   完整目录（懒加载，几千章不卡；**分页显示**，每页 300 集可切页，当前播放页带 ⏵ 标记）、
-  正在播放章节高亮、目录工具条（回顶部 / 定位正在播放 / 正倒序切换，**工具条可拖动并记忆位置**）；
+  正在播放章节高亮、**目录聚合浮动小圆钮**（单击展开竖排菜单：回顶部 / 定位播放 / 正倒序，
+  可拖动换位并记忆；独立组件，拖动不重建列表）；
   **定位采用 `GlobalKey + Scrollable.ensureVisible` 按行精确定位**（不估算行高，长书也准）
 - **悬浮播放球**（替代底部迷你播放栏）：全局挂载于 `MaterialApp.builder` 的 Overlay，
   拖动可换左右贴边、上下调整高度并记忆位置；点击展开迷你面板
-  （封面/章节/上一章/播放/下一章/进播放页）；播放页打开时自动隐藏（`PlayerPage.isShown`）
+  （封面/标题/章节名/上一章/播放/下一章/进播放页），面板与球同侧对齐、球太低时自动翻上方，
+  展开时盖半透明遮罩；播放页打开时自动隐藏（`PlayerPage.isShown`）
 - **播放**：倍速（至 3.0x）、定时关闭（含自定义分钟）、上一章/下一章、自动连播、
   下一章预加载（播到 80% 预解析）、**播放页目录面板**（打开即定位当前章节、每页 300 集分页）、
   播放页全局唯一、
@@ -300,6 +302,8 @@ box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `li
 | 转存成功却弹「转存结果数量异常（0/1）」 | 夸克任务 done 时 `save_as_top_fids` 有时为空（转存**目录**尤其常见）→ 先复查两轮 task，仍为空就列目标目录按名字 + 类型回查新 fid |
 | 目录定位不准（定位到半截/错行） | 按「行高 64px × index」估算偏移在 dense + 单双行混排时不准 → 改 `GlobalKey` 标记行 + `Scrollable.ensureVisible` 精确定位；长书先切到所在分页再等一帧定位 |
 | 书架封面播放按钮点击穿透进详情页 | 内层 `GestureDetector` 默认 `deferToChild`，tap 被外层 `InkWell` 赢走 → 设 `behavior: HitTestBehavior.opaque` 让内层赢得手势竞技场 |
+| 悬浮面板展开只露出一条/出屏 | 面板沿用球的贴边 `left` 定位，球在右侧时面板向右伸出屏幕 → 面板单独定位：与球同侧对齐、宽度夹在屏内，球太低时翻到球上方 |
+| 浮动按钮拖动卡顿 | 拖动的 `setState` 落在页面级 State 上，每帧重建整页（含 300 行目录）→ 抽成独立 `StatefulWidget`，拖动只重绘自身 |
 
 ---
 
