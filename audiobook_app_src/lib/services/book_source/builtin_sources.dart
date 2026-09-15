@@ -115,6 +115,58 @@ const List<BookSource> kBuiltinBookSources = [
     onlineAuthorPattern:
         r'class="author">作者：<a[^>]*>([^<]+)</a>',
   ),
+
+  // ------------------------------------------------------------------
+  // 13 听书网（移动站 m.ting13.cc）
+  //
+  // 反爬较强：
+  // - 搜索结果由页面 JS 拉接口渲染，页面本身不含数据，且接口要求先有会话
+  //   Cookie → 用 POST 搜索入口预热建会话，再请求 JSON 接口
+  // - 目录页（/tingdirs）与播放页（/play）有 JS 挑战（__51guid__）以及
+  //   请求头指纹校验，普通 HTTP 客户端会被 403 挡住
+  //   → 页面抓取走离屏 WebView（browserFetch: true）
+  // ------------------------------------------------------------------
+  BookSource(
+    id: 'ting13',
+    name: '13听书网',
+    type: 'online',
+    queries: 'full',
+    method: 'POST',
+    // 搜索入口只用于建立会话（拿 PHPSESSID），页面本身不含结果
+    urlTemplate: 'https://m.ting13.cc/novelsearch/search/result.html',
+    body: {'searchword': '{{key}}'},
+    headers: {
+      'Referer': 'https://m.ting13.cc/novelsearch/search/result.html',
+      'X-Requested-With': 'XMLHttpRequest',
+    },
+    // 真正的搜索结果接口，返回：
+    // {"novel":{"name":"诡秘之主","cover":"https://…gif","url":"/youshengxiaoshuo/38968/",…}}
+    onlineApiTemplate:
+        'https://m.ting13.cc/api/ajax/solist?word={{key}}&type=name&page=1&order=1',
+    onlineBookPattern:
+        r'"novel":\s*\{\s*"name":"([^"]+)"[^{}]*?"url":"([^"]+)"',
+    onlineBookTitleGroup: 1,
+    onlineBookUrlGroup: 2,
+    maxLinks: 10,
+    delayMs: 120,
+    // 详情页只列最新 10 章，完整目录在 /tingdirs/：
+    // <a href="/tingdirs/UBuaOrJc/cbbhASajUEujOrEd.html" …>全部章节</a>
+    onlineDirPattern: r'href="(/tingdirs/[^"]+\.html)"',
+    // 目录页分页：?page=2&sort=asc（每页 60 集）
+    onlineDirPageParam: 'page',
+    onlineDirMaxPages: 80,
+    // 章节：移动站 <a href="/play/38968_1_230902.html"title="第3218集_…">
+    // 桌面站是 <a href="/play/38968_1/207153.html"title="第1集_绯红">，路径里多一层
+    // 所以路径放宽成「数字/下划线/斜杠」都收
+    onlineChapterPattern:
+        r'<a[^>]*href="(/play/[\d_/]+\.html)"[^>]*title="([^"]+)"',
+    onlineChapterTitleGroup: 2,
+    onlineChapterUrlGroup: 1,
+    onlineChapterOrder: 'asc',
+    // 播放页里的音频地址：站点写法未完全固定，用宽松正则兜住常见形式
+    onlineAudioPattern: r'''(?:src|url|mp3|m4a|audio|source)["']?\s*[:=]\s*["']?(https?://[^"'\s<>\\]+\.(?:mp3|m4a|aac|ogg|opus)(?:\?[^"'\s<>\\]*)?)''',
+    browserFetch: true,
+  ),
 ];
 
 /// 内置源的 id 集合。

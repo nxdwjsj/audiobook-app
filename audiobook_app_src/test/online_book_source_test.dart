@@ -190,4 +190,110 @@ void main() {
           'https://www.tingshuwang.cc/d/file/yt/14207/2052-2059.mp3');
     });
   });
+
+  group('13 听书网（ting13）真实结构', () {
+    // 与 builtin_sources.dart 中 ting13 源一致的结构样本
+    const t13Source = BookSource(
+      id: 'ting13',
+      name: '13听书网',
+      type: 'online',
+      method: 'POST',
+      urlTemplate: 'https://m.ting13.cc/novelsearch/search/result.html',
+      body: {'searchword': '{{key}}'},
+      onlineApiTemplate:
+          'https://m.ting13.cc/api/ajax/solist?word={{key}}&type=name&page=1&order=1',
+      onlineBookPattern:
+          r'"novel":\s*\{\s*"name":"([^"]+)"[^{}]*?"url":"([^"]+)"',
+      onlineBookTitleGroup: 1,
+      onlineBookUrlGroup: 2,
+      onlineDirPattern: r'href="(/tingdirs/[^"]+\.html)"',
+      onlineDirPageParam: 'page',
+      onlineDirMaxPages: 80,
+      onlineChapterPattern:
+          r'<a[^>]*href="(/play/[\d_/]+\.html)"[^>]*title="([^"]+)"',
+      onlineChapterTitleGroup: 2,
+      onlineChapterUrlGroup: 1,
+      onlineChapterOrder: 'asc',
+      onlineAudioPattern:
+          r'''(?:src|url|mp3|m4a|audio|source)["']?\s*[:=]\s*["']?(https?://[^"'\s<>\\]+\.(?:mp3|m4a|aac|ogg|opus)(?:\?[^"'\s<>\\]*)?)''',
+      browserFetch: true,
+    );
+
+    test('搜索接口 JSON 命中书名与详情页链接', () {
+      const json = '{"type":1,"cnum":4,"data":[{"data":{"allvisit":"2.53万"},'
+          '"boyin":{"name":"曲中人工作室"},'
+          '"novel":{"name":"诡秘之主",'
+          '"cover":"https://image.itingshu.net/cover/yousheng/x.gif",'
+          '"url":"/youshengxiaoshuo/38968/","intro":"蒸汽与机械的浪潮中…"}}]}';
+      final m = RegExp(t13Source.onlineBookPattern!).firstMatch(json);
+      expect(m, isNotNull);
+      expect(m!.group(1), '诡秘之主');
+      expect(m.group(2), '/youshengxiaoshuo/38968/');
+    });
+
+    test('详情页能抠出完整目录链接', () {
+      final m = RegExp(t13Source.onlineDirPattern!).firstMatch(
+          '<span class="more fr"><a href="/tingdirs/UBuaOrJc/cbbhASajUEujOrEd.html"'
+          'style="color:#fff;">全部章节</a></span>');
+      expect(m, isNotNull);
+      expect(m!.group(1), '/tingdirs/UBuaOrJc/cbbhASajUEujOrEd.html');
+    });
+
+    test('目录页章节解析：href 与 title 紧邻、正序、两种路径格式都收', () {
+      final engine = BookSourceEngine(t13Source);
+      final detail = engine.parseOnlineDetail('''
+        <div class="play-list"><ul style="width: 100%;">
+          <li><a href="/play/38968_1_207153.html"title="第1集_绯红"><span>12-04</span>第1集_绯红</a></li>
+          <li><a href="/play/38968_1/207154.html"title="第2集_绯红_1"><span>12-04</span>第2集_绯红_1</a></li>
+        </ul></div>
+      ''', 'https://m.ting13.cc/tingdirs/UBuaOrJc/cbbhASajUEujOrEd.html');
+      expect(detail.chapters.length, 2);
+      expect(detail.chapters[0].url,
+          'https://m.ting13.cc/play/38968_1_207153.html');
+      expect(detail.chapters[0].title, '第1集_绯红');
+      expect(detail.chapters[1].url,
+          'https://m.ting13.cc/play/38968_1/207154.html');
+      // 正序站点不做反转
+      expect(detail.chapters[1].title, '第2集_绯红_1');
+    });
+
+    test('播放页音频正则兼容常见写法', () {
+      final re = RegExp(t13Source.onlineAudioPattern!);
+      const samples = [
+        '<audio id="player" src="https://cdn.iting13.com/a/38968/1.m4a"></audio>',
+        "<script>var url = 'https://cdn.iting13.com/a/38968/1.mp3';</script>",
+        '{"mp3":"https://cdn.iting13.com/a/38968/1.mp3?sign=abc"}',
+      ];
+      for (final html in samples) {
+        final m = re.firstMatch(html);
+        expect(m, isNotNull, reason: html);
+        expect(m!.group(1), startsWith('https://cdn.iting13.com/'));
+        expect(m.group(1), contains(RegExp(r'\.(mp3|m4a)')));
+      }
+    });
+
+    test('新增字段能序列化往返', () {
+      final back = BookSource.fromJson(t13Source.toJson());
+      expect(back.browserFetch, isTrue);
+      expect(back.onlineDirPageParam, 'page');
+      expect(back.onlineDirMaxPages, 80);
+      expect(back.onlineDirPattern, isNotNull);
+      expect(back.onlineApiTemplate, contains('/api/ajax/solist'));
+    });
+
+    test('onlineApiTemplate 不是绝对地址时报错', () {
+      expect(
+        () => BookSource.fromJson({
+          'id': 'x',
+          'name': 'x',
+          'type': 'online',
+          'url': 'https://a.com/s',
+          'onlineBookPattern': r'a',
+          'onlineChapterPattern': r'b',
+          'onlineApiTemplate': '/api/only/path',
+        }),
+        throwsFormatException,
+      );
+    });
+  });
 }

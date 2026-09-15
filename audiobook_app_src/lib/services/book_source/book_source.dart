@@ -118,6 +118,24 @@ class BookSource {
   /// online：详情页作者正则（可选，仅用于展示）。
   final String? onlineAuthorPattern;
 
+  /// online：详情页里「查看全部章节」链接的正则（捕获组 1 = 目录页地址）。
+  /// 站点详情页往往只列最新 N 章，配了它才能拿到完整目录。
+  final String? onlineDirPattern;
+
+  /// online：目录页的分页参数名（如 'page'）。配了就翻页抓完整目录。
+  final String? onlineDirPageParam;
+
+  /// online：目录页最多抓多少页（防止异常站点把页数刷爆）。
+  final int onlineDirMaxPages;
+
+  /// online：真正的数据接口（GET，支持 {{key}} 占位符）。
+  /// 配了它就先请求 [urlTemplate] 建立会话（拿 Cookie），再请求本接口取数据。
+  final String? onlineApiTemplate;
+
+  /// 抓详情页/目录页/播放页时改用离屏 WebView（真实浏览器环境）。
+  /// 用于有 JS 挑战 / 请求头指纹校验的站点（Dio 会被 403 挡住）。
+  final bool browserFetch;
+
   const BookSource({
     required this.id,
     required this.name,
@@ -153,6 +171,11 @@ class BookSource {
     this.onlineChapterOrder = 'asc',
     this.onlineReferer,
     this.onlineAuthorPattern,
+    this.onlineDirPattern,
+    this.onlineDirPageParam,
+    this.onlineDirMaxPages = 60,
+    this.onlineApiTemplate,
+    this.browserFetch = false,
   });
 
   bool get isOnline => type == 'online';
@@ -205,6 +228,12 @@ class BookSource {
         if (onlineReferer != null) 'onlineReferer': onlineReferer,
         if (onlineAuthorPattern != null)
           'onlineAuthorPattern': onlineAuthorPattern,
+        if (onlineDirPattern != null) 'onlineDirPattern': onlineDirPattern,
+        if (onlineDirPageParam != null)
+          'onlineDirPageParam': onlineDirPageParam,
+        if (onlineDirMaxPages != 60) 'onlineDirMaxPages': onlineDirMaxPages,
+        if (onlineApiTemplate != null) 'onlineApiTemplate': onlineApiTemplate,
+        if (browserFetch) 'browserFetch': browserFetch,
       };
 
   /// 解析并校验一个书源 JSON。失败抛 [FormatException]（带可读原因）。
@@ -275,6 +304,19 @@ class BookSource {
           'onlineChapterOrder 只支持 asc / desc');
     }
 
+    // 数据接口（可选）：必须给绝对地址
+    final apiTemplateRaw = json['onlineApiTemplate']?.toString().trim();
+    final apiTemplate =
+        (apiTemplateRaw == null || apiTemplateRaw.isEmpty) ? null : apiTemplateRaw;
+    if (apiTemplate != null && !apiTemplate.startsWith('http')) {
+      throw const FormatException(
+          'onlineApiTemplate 必须以 http:// 或 https:// 开头');
+    }
+    final dirPageParamRaw = json['onlineDirPageParam']?.toString().trim();
+    final dirPageParam = (dirPageParamRaw == null || dirPageParamRaw.isEmpty)
+        ? null
+        : dirPageParamRaw;
+
     Map<String, String> mapOf(Object? v) => v is Map
         ? v.map((k, e) => MapEntry(k.toString(), e.toString()))
         : const {};
@@ -329,6 +371,12 @@ class BookSource {
       onlineAuthorPattern: type == 'online'
           ? checkOnline('onlineAuthorPattern')
           : null,
+      onlineDirPattern:
+          type == 'online' ? checkOnline('onlineDirPattern') : null,
+      onlineDirPageParam: dirPageParam,
+      onlineDirMaxPages: (json['onlineDirMaxPages'] as num?)?.toInt() ?? 60,
+      onlineApiTemplate: apiTemplate,
+      browserFetch: json['browserFetch'] as bool? ?? false,
     );
   }
 

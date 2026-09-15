@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'book_source.dart';
 import 'online_book_hit.dart';
 import 'resource_hit.dart';
+import 'webview_fetcher.dart';
 
 /// 书源规则引擎：把一个 [BookSource] 规则跑成一个「发现渠道」。
 ///
@@ -29,6 +30,23 @@ class BookSourceEngine {
     if (source.onlineAudioPattern != null) {
       _onlineAudioRe = RegExp(source.onlineAudioPattern!);
     }
+    if (source.onlineDirPattern != null) {
+      _onlineDirRe = RegExp(source.onlineDirPattern!);
+    }
+    // 会话 Cookie：搜索预热拿到的 PHPSESSID 之类，后续请求必须一直带着，
+    // 否则数据接口会返回空。同时把响应的 Set-Cookie 收下来。
+    _dio.interceptors.add(InterceptorsWrapper(
+      onRequest: (options, handler) {
+        if (_cookies.isNotEmpty) {
+          options.headers.putIfAbsent('Cookie', () => _cookieHeader);
+        }
+        handler.next(options);
+      },
+      onResponse: (response, handler) {
+        _collectCookies(response.headers['set-cookie']);
+        handler.next(response);
+      },
+    ));
   }
 
   final BookSource source;
@@ -55,8 +73,38 @@ class BookSourceEngine {
   RegExp? _onlineBookRe;
   RegExp? _onlineChapterRe;
   RegExp? _onlineAudioRe;
+  RegExp? _onlineDirRe;
 
   String? _antiBlockCookieCache;
+
+  /// 会话 Cookie（搜索预热/登录态），键值对形式。
+  final Map<String, String> _cookies = {};
+
+  /// WebView 会话是否已过挑战：过了就用页面内 fetch 走快速通道。
+  bool _browserSessionReady = false;
+
+  /// 被反爬挡住的特征：挑战脚本或过短响应（403 拦截页只有一百多字节）。
+  static final RegExp _blockedHint =
+      RegExp(r'var reversed|__51guid__|_guard/auto\.js');
+
+  String get _cookieHeader =>
+      _cookies.entries.map((e) => '${e.key}=${e.value}').join('; ');
+
+  /// 收集 Set-Cookie（只留键值，丢掉属性）。
+  void _collectCookies(List<String>? raw) {
+    if (raw == null) return;
+    for (final item in raw) {
+      final first = item.split(';').first.trim();
+      final eq = first.indexOf('=');
+      if (eq <= 0) continue;
+      _cookies[first.substring(0, eq)] = first.substring(eq + 1);
+    }
+  }
+
+  bool _looksBlocked(String html) {
+    final text = html.trim();
+    return text.length < 200 || _blockedHint.hasMatch(text);
+  }
 
   // ------------------------------------------------------------------
   // 查询词生成
@@ -141,8 +189,7 @@ class BookSourceEngine {
     for (final q in buildQueries(keyword)) {
       for (final variant in variants) {
         try {
-          final html = await _fetchSearch(q, variant);
-          final text = _extractText(html);
+          final text = _extractText(await _fetchSearchPage(q, variant));
           for (final m in bookRe.allMatches(text)) {
             final url = resolveUrl(
                 source.urlTemplate, m.group(source.onlineBookUrlGroup) ?? '');
@@ -173,12 +220,60 @@ class BookSourceEngine {
 
   /// online 型详情页：请求详情页并解析章节列表。
   /// 章节地址可能是音频直链，也可能是播放页（由 [fetchOnlineAudio] 二次解析）。
+  /// 配了 [BookSource.onlineDirPattern] 时，会再进「完整目录」页（支持分页），
+  /// 因为详情页通常只列最新几章。
   Future<OnlineBookDetail> fetchOnlineChapters(String detailUrl) async {
-    final html = await _text(detailUrl, headers: {
-      ...source.detailHeaders,
-      'Referer': source.onlineReferer ?? _dirOf(detailUrl),
-    });
-    return parseOnlineDetail(html, detailUrl);
+    final detailHtml = await _get(
+      detailUrl,
+      headers: source.detailHeaders,
+      referer: source.onlineReferer ?? _dirOf(detailUrl),
+    );
+    final dirRe = _onlineDirRe;
+    if (dirRe == null) return parseOnlineDetail(detailHtml, detailUrl);
+
+    final rawDir = dirRe.firstMatch(detailHtml)?.group(1) ?? '';
+    if (rawDir.isEmpty) {
+      debugPrint('[BookSource ${source.id}] 详情页未匹配到完整目录链接，改用详情页章节');
+      return parseOnlineDetail(detailHtml, detailUrl);
+    }
+    final dirUrl = resolveUrl(detailUrl, rawDir);
+    final firstPage = await _get(
+      dirUrl,
+      headers: source.detailHeaders,
+      referer: detailUrl,
+    );
+    final detail = parseOnlineDetail(firstPage, dirUrl);
+    final pageParam = source.onlineDirPageParam;
+    if (pageParam == null || detail.chapters.isEmpty) {
+      return OnlineBookDetail(author: detail.author, chapters: detail.chapters);
+    }
+
+    // 目录分页：第一页里一般列着全部页码，取最大值作为末页
+    final lastPage = _maxPageOf(firstPage, pageParam)
+        .clamp(1, source.onlineDirMaxPages);
+    if (lastPage <= 1) {
+      return OnlineBookDetail(author: detail.author, chapters: detail.chapters);
+    }
+    final all = <OnlineChapter>[...detail.chapters];
+    final seen = all.map((c) => c.url).toSet();
+    for (var page = 2; page <= lastPage; page++) {
+      try {
+        final pageUrl = _withPage(dirUrl, pageParam, page);
+        final html = await _get(
+          pageUrl,
+          headers: source.detailHeaders,
+          referer: dirUrl,
+        );
+        for (final c in parseOnlineDetail(html, pageUrl).chapters) {
+          if (seen.add(c.url)) all.add(c);
+        }
+      } catch (e) {
+        debugPrint('[BookSource ${source.id}] 目录第 $page 页失败: $e');
+      }
+      await _sleep();
+    }
+    debugPrint('[BookSource ${source.id}] 目录共 ${all.length} 集（$lastPage 页）');
+    return OnlineBookDetail(author: detail.author, chapters: all);
   }
 
   /// 纯解析：详情页 HTML → 章节列表（不请求网络，可单测）。
@@ -221,10 +316,11 @@ class BookSourceEngine {
     if (audioRe == null) {
       throw StateError('该源未配置 onlineAudioPattern，无法解析播放页');
     }
-    final html = await _text(chapterUrl, headers: {
-      ...source.detailHeaders,
-      'Referer': source.onlineReferer ?? _dirOf(chapterUrl),
-    });
+    final html = await _get(
+      chapterUrl,
+      headers: source.detailHeaders,
+      referer: source.onlineReferer ?? _dirOf(chapterUrl),
+    );
     final m = audioRe.firstMatch(html);
     if (m == null) {
       throw StateError('播放页里没有匹配到音频地址');
@@ -250,6 +346,83 @@ class BookSourceEngine {
     final segs = uri.pathSegments.toList();
     if (segs.isNotEmpty) segs.removeLast();
     return uri.replace(pathSegments: segs, query: null).toString();
+  }
+
+  // ------------------------------------------------------------------
+  // 统一抓取入口
+  // ------------------------------------------------------------------
+
+  /// 抓一个页面：配了 [BookSource.browserFetch] 的站点走离屏 WebView
+  /// （真实浏览器环境，能自己过 JS 挑战），其余走普通 HTTP。
+  ///
+  /// WebView 失败或被判定为拦截页时回退 HTTP，尽量不整体失败。
+  Future<String> _get(
+    String url, {
+    Map<String, String>? headers,
+    String? referer,
+  }) async {
+    if (source.browserFetch && WebViewFetcher.isSupported) {
+      try {
+        final html = await _getViaBrowser(url);
+        if (!_looksBlocked(html)) return html;
+        debugPrint('[BookSource ${source.id}] WebView 拿到疑似拦截页，回退 HTTP: $url');
+      } catch (e) {
+        debugPrint('[BookSource ${source.id}] WebView 抓取失败，回退 HTTP: $e');
+      }
+    }
+    return _text(url, headers: {
+      ...?headers,
+      if (referer != null) 'Referer': referer,
+    });
+  }
+
+  /// WebView 通道：首个页面用导航（会过挑战并建立会话），
+  /// 之后同源页面用页面内 fetch（带 Cookie、不渲染，快得多）。
+  Future<String> _getViaBrowser(String url) async {
+    final fetcher = WebViewFetcher.instance;
+    if (!_browserSessionReady) {
+      final html = await fetcher.loadHtml(url);
+      _browserSessionReady = true;
+      await _syncBrowserCookies(url);
+      return html;
+    }
+    final text = await fetcher.fetchText(url);
+    if (_looksBlocked(text)) {
+      // 会话失效（挑战 Cookie 过期/被清）→ 重新导航过一次挑战
+      _browserSessionReady = false;
+      return fetcher.loadHtml(url);
+    }
+    return text;
+  }
+
+  /// 把 WebView 里的会话 Cookie 收进本地 jar，供 Dio 请求复用。
+  Future<void> _syncBrowserCookies(String url) async {
+    final raw = await WebViewFetcher.instance.cookieHeader(url);
+    if (raw.isEmpty) return;
+    for (final part in raw.split('; ')) {
+      final eq = part.indexOf('=');
+      if (eq > 0) _cookies[part.substring(0, eq)] = part.substring(eq + 1);
+    }
+  }
+
+  /// 目录页分页：找出站点列出的最大页码（「快速选集」里通常有全部页码）。
+  int _maxPageOf(String html, String param) {
+    final re = RegExp('[?&]${RegExp.escape(param)}=(\\d+)');
+    var max = 1;
+    for (final m in re.allMatches(html)) {
+      final v = int.tryParse(m.group(1) ?? '');
+      if (v != null && v > max) max = v;
+    }
+    return max;
+  }
+
+  /// 给 URL 换上指定页码（保留已有查询参数）。
+  String _withPage(String url, String param, int page) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return url;
+    final query = Map<String, String>.from(uri.queryParameters);
+    query[param] = '$page';
+    return uri.replace(queryParameters: query).toString();
   }
 
   /// 处理一个搜索页的响应文本。
@@ -318,6 +491,22 @@ class BookSourceEngine {
   // ------------------------------------------------------------------
   // 请求层
   // ------------------------------------------------------------------
+
+  /// 搜索结果的数据来源。
+  ///
+  /// 有些站点（如 13 听书）搜索结果由页面里的 JS 拉接口渲染，页面本身不含数据，
+  /// 且接口要求先有会话 Cookie：这时先用搜索入口请求一次建立会话
+  /// （拿 PHPSESSID），再请求 [BookSource.onlineApiTemplate] 取 JSON。
+  Future<String> _fetchSearchPage(String keyword, String variant) async {
+    final api = source.onlineApiTemplate;
+    if (api == null) return _fetchSearch(keyword, variant);
+    try {
+      await _fetchSearch(keyword, variant); // 预热：建立会话
+    } catch (e) {
+      debugPrint('[BookSource ${source.id}] 搜索预热失败（继续请求数据接口）: $e');
+    }
+    return _text(_renderUrl(api, keyword, variant), headers: source.headers);
+  }
 
   /// 请求搜索入口，返回响应文本。
   Future<String> _fetchSearch(String keyword, String variant) async {
