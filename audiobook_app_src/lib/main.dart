@@ -5,12 +5,14 @@ import 'package:provider/provider.dart';
 
 import 'models/drive_item.dart';
 import 'pages/home_page.dart';
+import 'repositories/book_source_repository.dart';
 import 'repositories/bookshelf_repository.dart';
 import 'repositories/listen_session_repository.dart';
 import 'repositories/progress_repository.dart';
 import 'repositories/stats_repository.dart';
 import 'services/audio_player_service.dart' show AudioPlayerService, AppAudioHandler;
 import 'services/baidu_drive_service.dart';
+import 'services/book_source/book_source_engine.dart';
 import 'services/local_import_service.dart';
 import 'services/quark_drive_service.dart';
 import 'services/cloud_drive_service.dart';
@@ -70,6 +72,11 @@ void main() async {
   // 注入 AudioHandler 的依赖（原本在 Provider create 回调里做，现在提前到 main）
   final sessionRepo = ListenSessionRepository(storage);
   final statsRepo = StatsRepository(storage);
+
+  // 书源：内置 5 源 + 用户自定义/导入（全网搜书的发现渠道）
+  final bookSourceRepo = BookSourceRepository(storage);
+  await bookSourceRepo.load();
+
   playerService.sessionRepo = sessionRepo;
   playerService.statsRepo = statsRepo;
   playerService.storage = storage;
@@ -93,6 +100,25 @@ void main() async {
     }
   };
 
+  // 在线书源章节懒解析：播放页 → 音频直链（书源规则驱动）。
+  // chapter.shareUrl 存书源 id，播放器按 id 找对应规则。
+  playerService.onlineAudioResolver = (sourceId, chapterUrl) async {
+    if (sourceId.isEmpty) return null;
+    final source = bookSourceRepo.all
+        .where((s) => s.id == sourceId)
+        .firstOrNull;
+    if (source == null) {
+      debugPrint('[OnlineAudio] 书源 $sourceId 不存在');
+      return null;
+    }
+    try {
+      return await BookSourceEngine(source).fetchOnlineAudio(chapterUrl);
+    } catch (e) {
+      debugPrint('[OnlineAudio] 解析失败 $chapterUrl: $e');
+      return null;
+    }
+  };
+
   runApp(
     MultiProvider(
       providers: [
@@ -108,6 +134,9 @@ void main() async {
         ChangeNotifierProvider<StatsRepository>.value(
           value: statsRepo,
         ),
+        ChangeNotifierProvider<BookSourceRepository>.value(
+          value: bookSourceRepo,
+        ),
         Provider<LocalImportService>(
           create: (ctx) => LocalImportService(
             ctx.read<BookshelfRepository>(),
@@ -119,7 +148,7 @@ void main() async {
         ChangeNotifierProvider<BaiduDriveService>.value(value: baiduDrive),
         ChangeNotifierProvider<QuarkDriveService>.value(value: quarkDrive),
         Provider<ResourceSearchService>(
-          create: (_) => ResourceSearchService(quarkDrive),
+          create: (_) => ResourceSearchService(quarkDrive, bookSourceRepo),
         ),
         ChangeNotifierProvider<AudioPlayerService>.value(
           value: playerService,
@@ -145,10 +174,17 @@ class AudiobookApp extends StatelessWidget {
       home: const HomePage(),
       // 全局悬浮播放球：盖在所有路由（含底部导航栏）之上，
       // 播放页打开或无正在播放的书时自动隐藏。
+      // 必须额外包一层 Overlay：播放球挂在 Navigator 之上，
+      // 自身子树里没有 Overlay 祖先，展开横条上的 Tooltip 会因
+      // 找不到 Overlay 直接抛错（红条框盖住整条播放栏）。
       builder: (context, child) => Stack(
         children: [
           child ?? const SizedBox.shrink(),
-          const FloatingPlayerBall(),
+          Overlay(
+            initialEntries: [
+              OverlayEntry(builder: (_) => const FloatingPlayerBall()),
+            ],
+          ),
         ],
       ),
     );

@@ -1,22 +1,15 @@
-import 'dart:convert';
 import 'dart:math';
 
-import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import '../models/drive_item.dart';
+import '../repositories/book_source_repository.dart';
+import 'book_source/book_source_engine.dart';
+import 'book_source/online_book_hit.dart';
+import 'book_source/resource_hit.dart';
 import 'quark_drive_service.dart';
 
-/// 一个待解析的夸克分享。
-class ResourceHit {
-  final String pwdId;
-  final String? passcode;
-  final String source;
-
-  ResourceHit(this.pwdId, {this.passcode, this.source = 'manual'});
-
-  String get url => 'https://pan.quark.cn/s/$pwdId';
-}
+export 'book_source/resource_hit.dart';
 
 /// 一个分享的解析结果（全网搜书的列表项）。
 class ResourceResult {
@@ -48,32 +41,15 @@ class ResourceResult {
   int get audioBytes => audioItems.fold(0, (s, i) => s + i.size);
 }
 
-/// 全网搜书：多渠道发现夸克分享 → 递归解析 → 按关键词打分排序。
+/// 全网搜书：启用书源发现夸克分享 → 递归解析 → 按关键词打分排序。
 ///
-/// 渠道与 tool/quark_crawler.dart 保持一致：
-/// B 站搜索接口 / yigushi / yangzhiyi / slowread / fangkong。
+/// 书源由 BookSourceRepository 提供（内置 5 源 + 用户自定义/导入），
+/// 每个源由 BookSourceEngine 按规则执行；解析/打分逻辑与渠道无关。
 class ResourceSearchService {
-  ResourceSearchService(this._quark);
+  ResourceSearchService(this._quark, this._sources);
 
   final QuarkDriveService _quark;
-
-  static const String _browserUa =
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-      '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-
-  final Dio _dio = Dio(BaseOptions(
-    connectTimeout: const Duration(seconds: 15),
-    receiveTimeout: const Duration(seconds: 20),
-    headers: {
-      'User-Agent': _browserUa,
-      'Accept':
-          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'zh-CN,zh;q=0.9',
-    },
-    validateStatus: (s) => s != null && s < 600,
-  ));
-
-  String? _biliCookieCache;
+  final BookSourceRepository _sources;
 
   /// 一个分享里最多展示几本（合集分享可能塞几十本，避免刷屏）
   static const int _maxGroupsPerShare = 20;
@@ -94,7 +70,12 @@ class ResourceSearchService {
     // 策展类渠道优先，避免 B 站噪声挤占解析名额
     final indexed = [for (var i = 0; i < hits.length; i++) (i, hits[i])];
     indexed.sort((a, b) {
-      final c = _channelRank(a.$2.source).compareTo(_channelRank(b.$2.source));
+      // 使用书源的 rank 排序（0=策展类，1=其它）
+      final aSource = _sources.all.where((s) => s.id == a.$2.source).firstOrNull;
+      final bSource = _sources.all.where((s) => s.id == b.$2.source).firstOrNull;
+      final aRank = aSource?.rank ?? 1;
+      final bRank = bSource?.rank ?? 1;
+      final c = aRank.compareTo(bRank);
       return c != 0 ? c : a.$1.compareTo(b.$1);
     });
     var targets = [for (final e in indexed) e.$2];
@@ -224,34 +205,27 @@ class ResourceSearchService {
   }
 
   // ------------------------------------------------------------------
-  // 发现渠道
+  // 发现渠道（书源规则驱动）
   // ------------------------------------------------------------------
-
-  /// 渠道优先级：0 = 策展类（提取码通常准确），1 = 其它（如 B 站，码多为推测）。
-  static int _channelRank(String source) {
-    switch (source) {
-      case 'fangkong':
-      case 'yigushi':
-      case 'slowread':
-      case 'yangzhiyi':
-      case 'page':
-        return 0;
-      default:
-        return 1;
-    }
-  }
 
   Future<List<ResourceHit>> _discover(
     String keyword,
     void Function(String)? onProgress,
   ) async {
     final found = <String, ResourceHit>{};
+
+    /// 书源 rank（0=策展类，1=其它）。rank 未知按 1 处理。
+    int rankOf(String id) {
+      final s = _sources.all.where((s) => s.id == id).firstOrNull;
+      return s?.rank ?? 1;
+    }
+
     void addAll(List<ResourceHit> list) {
       for (final l in list) {
         final exist = found[l.pwdId];
         if (exist == null) {
           found[l.pwdId] = l;
-        } else if (_channelRank(l.source) < _channelRank(exist.source)) {
+        } else if (rankOf(l.source) < rankOf(exist.source)) {
           // 同一个分享被多个渠道发现时，保留优先级更高渠道的提取码
           // （B 站的码常是从页面上下文猜的，容易 41007）
           found[l.pwdId] = l;
@@ -259,18 +233,26 @@ class ResourceSearchService {
       }
     }
 
-    // 5 个渠道并行发现；单渠道超时/被封禁不影响其它渠道。
-    onProgress?.call('发现中：B站 / 第一故事 / 故事网 / 合集 / 放空（并行）');
-    final channels = <String, Future<List<ResourceHit>>>{
-      'bilibili': _bilibili(keyword),
-      'yigushi': _yigushi(keyword),
-      'yangzhiyi': _yangzhiyi(keyword),
-      'slowread': _slowread(keyword),
-      'fangkong': _fangkong(keyword),
+    final sources = _sources.enabled;
+    if (sources.isEmpty) {
+      onProgress?.call('没有启用的书源，去书源管理页开启或导入');
+      return [];
+    }
+    // online 型源不产夸克分享，由搜索页单独调 searchOnline，这里跳过
+    final quarkSources = sources.where((s) => !s.isOnline).toList();
+    if (quarkSources.isEmpty) {
+      onProgress?.call('没有启用中的夸克网盘类书源');
+      return [];
+    }
+    // 各书源并行发现；单源超时/被封禁不影响其它源。
+    onProgress?.call(
+        '发现中：${quarkSources.map((s) => s.name).join(' / ')}（并行）');
+    final engines = {
+      for (final s in quarkSources) s.id: BookSourceEngine(s),
     };
-    await Future.wait(channels.entries.map((e) async {
+    await Future.wait(engines.entries.map((e) async {
       try {
-        addAll(await e.value);
+        addAll((await e.value.run(keyword)) ?? const []);
       } catch (err) {
         debugPrint('[ResourceSearch] ${e.key}: $err');
       }
@@ -279,213 +261,51 @@ class ResourceSearchService {
     return found.values.toList();
   }
 
-  Future<List<ResourceHit>> _bilibili(String keyword) async {
-    final out = <ResourceHit>[];
-    for (final q in {'$keyword 夸克', keyword}) {
-      try {
-        final enc = Uri.encodeComponent(q);
-        final url = 'https://api.bilibili.com/x/web-interface/search/type'
-            '?search_type=video&keyword=$enc&page=1&page_size=20';
-        final body = await _biliGet(url);
-        final data = jsonDecode(body);
-        if (data is Map && data['code'] == 0) {
-          final results = (data['data']?['result'] as List<dynamic>? ?? []);
-          final sb = StringBuffer();
-          for (final r in results) {
-            if (r is! Map) continue;
-            sb
-              ..writeln(r['title'] ?? '')
-              ..writeln(r['description'] ?? '')
-              ..writeln(r['tag'] ?? '');
-          }
-          out.addAll(_extract(sb.toString(), 'bilibili'));
-        }
-      } catch (e) {
-        debugPrint('[ResourceSearch] bilibili「$q」: $e');
-      }
-      await _sleep(150);
-    }
-    return out;
-  }
-
-  Future<String> _biliGet(String url) async {
-    var cookie = await _biliCookie();
-    for (var attempt = 0; attempt < 3; attempt++) {
-      try {
-        return await _text(url, headers: {
-          'Referer': 'https://www.bilibili.com/',
-          'Origin': 'https://www.bilibili.com',
-          if (cookie != null) 'Cookie': cookie,
-        });
-      } catch (e) {
-        if (!e.toString().contains('412') || attempt == 2) rethrow;
-        _biliCookieCache = null;
-        await _sleep(600);
-        cookie = await _biliCookie();
-      }
-    }
-    throw StateError('unreachable');
-  }
-
-  Future<String?> _biliCookie() async {
-    if (_biliCookieCache != null) return _biliCookieCache;
-    try {
-      final resp = await _dio.get<String>(
-        'https://www.bilibili.com/',
-        options: Options(responseType: ResponseType.plain),
-      );
-      final parts = <String>[];
-      for (final c in resp.headers['set-cookie'] ?? const <String>[]) {
-        final first = c.split(';').first.trim();
-        if (first.startsWith('buvid3=') ||
-            first.startsWith('buvid4=') ||
-            first.startsWith('b_nut=')) {
-          parts.add(first);
-        }
-      }
-      if (parts.isNotEmpty) {
-        _biliCookieCache = parts.join('; ');
-        return _biliCookieCache;
-      }
-    } catch (_) {}
-    final rnd = Random();
-    String hex(int n) => List.generate(
-        n, (_) => rnd.nextInt(16).toRadixString(16).toUpperCase()).join();
-    _biliCookieCache = 'buvid3=${hex(8)}-${hex(4)}-${hex(4)}-${hex(4)}-'
-        '${hex(12)}infoc; b_nut=${DateTime.now().millisecondsSinceEpoch ~/ 1000}';
-    return _biliCookieCache;
-  }
-
-  Future<List<ResourceHit>> _yigushi(String keyword) async {
-    final out = <ResourceHit>[];
-    final seen = <String>{};
-    final tokens =
-        keyword.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).take(3).toList();
-    final queries = {...tokens, if (tokens.length > 1) keyword};
-    for (final q in queries) {
-      for (final mod in const ['youshengxiaoshuo', 'soft', 'xiqu', 'baby']) {
-        String html;
-        try {
-          html = await _text(
-              'https://www.yigushi.com/$mod/search.php?kw=${Uri.encodeComponent(q)}');
-        } catch (e) {
-          // 单个板块请求失败不该让整个渠道归零
-          debugPrint('[ResourceSearch] yigushi/$mod: $e');
-          continue;
-        }
-        final re = RegExp(
-            r'<a href="(https://www\.yigushi\.com/[^"]+\.html)"[^>]*?target="_blank"[^>]*?title="([^"]+)"');
-        final articles = <String>[];
-        for (final m in re.allMatches(html)) {
-          final title = m.group(2)!;
-          if (!tokens.any((t) => title.contains(t))) continue;
-          if (!seen.add(m.group(1)!)) continue;
-          articles.add(m.group(1)!);
-          if (articles.length >= 3) break;
-        }
-        for (final url in articles) {
-          try {
-            out.addAll(_extract(await _text(url), 'yigushi'));
-          } catch (_) {}
-          await _sleep(120);
-        }
-        await _sleep(120);
-      }
-    }
-    return out;
-  }
-
-  Future<List<ResourceHit>> _yangzhiyi(String keyword) async {
-    final out = <ResourceHit>[];
-    final tokens =
-        keyword.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).take(2).toList();
-    for (final q in tokens) {
-      final resp = await _dio.post<String>(
-        'https://mp3.yangzhiyi.com/zb_system/cmd.php?act=search',
-        data: {'q': q},
-        options: Options(
-          responseType: ResponseType.plain,
-          contentType: Headers.formUrlEncodedContentType,
-        ),
-      );
-      if ((resp.statusCode ?? 0) >= 400) continue;
-      final re = RegExp(
-          r'<h2[^>]*>\s*<a href="(https://mp3\.yangzhiyi\.com/[^"]+\.html)"[^>]*title="([^"]+)"');
-      final articles = <String>[];
-      for (final m in re.allMatches(resp.data ?? '')) {
-        final title = m.group(2)!;
-        if (!tokens.any((t) => title.contains(t))) continue;
-        articles.add(m.group(1)!);
-        if (articles.length >= 3) break;
-      }
-      for (final url in articles) {
-        try {
-          out.addAll(_extract(await _text(url), 'yangzhiyi'));
-        } catch (_) {}
-        await _sleep(120);
-      }
-      await _sleep(120);
-    }
-    return out;
-  }
-
-  Future<List<ResourceHit>> _slowread(String keyword) async {
-    final tokens =
-        keyword.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
-    final html = await _text('https://slowread.net/k/audiobook.html');
-    final re = RegExp(
-        r"<span>([^<]+)</span>\s*<a href='(https://pan\.quark\.cn/s/[0-9a-zA-Z_-]+)'");
-    final out = <ResourceHit>[];
-    for (final m in re.allMatches(html)) {
-      final title = m.group(1)!;
-      if (!tokens.any((t) => title.contains(t))) continue;
-      out.add(ResourceHit(m.group(2)!.split('/').last, source: 'slowread'));
-      if (out.length >= 5) break;
-    }
-    return out;
-  }
-
-  Future<List<ResourceHit>> _fangkong(String keyword) async {
-    final html = await _text(
-        'https://fangkong.cc/s/${Uri.encodeComponent(keyword)}.html');
-    return _extract(html, 'fangkong');
-  }
-
   // ------------------------------------------------------------------
-  // 工具
+  // online 型书源（在线听书站）
   // ------------------------------------------------------------------
 
-  List<ResourceHit> _extract(String html, String source) {
-    final out = <ResourceHit>[];
+  /// 搜索所有启用的 online 型源，返回可直接在线收听的书。
+  Future<List<OnlineBookHit>> searchOnline(
+    String keyword, {
+    void Function(String message)? onProgress,
+  }) async {
+    final sources = _sources.enabled.where((s) => s.isOnline).toList();
+    if (sources.isEmpty) return [];
+    onProgress?.call(
+        '在线书源搜索：${sources.map((s) => s.name).join(' / ')}');
+    final out = <OnlineBookHit>[];
+    await Future.wait(sources.map((s) async {
+      try {
+        final hits = await BookSourceEngine(s).searchOnline(keyword);
+        if (hits.isNotEmpty) out.addAll(hits);
+      } catch (err) {
+        debugPrint('[ResourceSearch] online ${s.id}: $err');
+      }
+    }));
+    // 按书名排序，同名去重（不同源搜到同一本时保留第一个）
     final seen = <String>{};
-    final re = RegExp(r'pan\.quark\.cn/s/([0-9a-zA-Z_-]+)');
-    for (final m in re.allMatches(html)) {
-      final pwdId = m.group(1)!;
-      if (!seen.add(pwdId)) continue;
-      final start = max(0, m.start - 200);
-      final end = min(html.length, m.end + 200);
-      final window = html.substring(start, end);
-      final pwdMatch = RegExp(
-        r'(?:提取码|密码|pwd|passcode)\s*[:：]?\s*([0-9a-zA-Z]{4})\b',
-        caseSensitive: false,
-      ).firstMatch(window);
-      out.add(ResourceHit(pwdId,
-          passcode: pwdMatch?.group(1), source: source));
-    }
+    out.retainWhere((h) => seen.add(h.detailUrl));
+    out.sort((a, b) => a.title.compareTo(b.title));
     return out;
   }
 
-  Future<String> _text(String url, {Map<String, String>? headers}) async {
-    final resp = await _dio.get<String>(
-      url,
-      options: Options(responseType: ResponseType.plain, headers: headers),
-    );
-    if ((resp.statusCode ?? 0) >= 400) {
-      throw Exception('HTTP ${resp.statusCode}');
+  /// 解析一本在线书的章节列表（供加入书架时调用）。
+  Future<OnlineBookDetail> resolveOnlineChapters(OnlineBookHit hit) async {
+    final s = _sources.all.where((x) => x.id == hit.source).firstOrNull;
+    if (s == null) {
+      throw StateError('书源 ${hit.source} 不存在（可能已被删除）');
     }
-    return resp.data ?? '';
+    return BookSourceEngine(s).fetchOnlineChapters(hit.detailUrl);
   }
 
-  Future<void> _sleep(int ms) =>
-      Future.delayed(Duration(milliseconds: ms + Random().nextInt(150)));
+  /// 播放时懒解析：在线书的一个章节地址 → 音频直链。
+  /// 章节地址已是直链时原样返回（引擎内部判断）。
+  Future<String> resolveOnlineAudio(String sourceId, String chapterUrl) async {
+    final s = _sources.all.where((x) => x.id == sourceId).firstOrNull;
+    if (s == null) {
+      throw StateError('书源 $sourceId 不存在（可能已被删除）');
+    }
+    return BookSourceEngine(s).fetchOnlineAudio(chapterUrl);
+  }
 }

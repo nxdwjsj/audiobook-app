@@ -1,15 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/book.dart';
 import '../models/bookshelf_book.dart';
+import '../models/chapter.dart';
 import '../models/drive_item.dart';
+import '../repositories/book_source_repository.dart';
 import '../repositories/bookshelf_repository.dart';
 import '../services/audio_player_service.dart';
+import '../services/book_source/online_book_hit.dart';
 import '../services/quark_drive_service.dart';
 import '../services/resource_search_service.dart';
 import '../services/storage_service.dart';
 import '../widgets/frosted_glass.dart';
 import '../widgets/throttled_navigator.dart';
+import 'book_source_page.dart';
 
 /// 全网搜书：多渠道发现夸克网盘有声书分享，一键加入书架或直接播放。
 class ResourceSearchPage extends StatefulWidget {
@@ -22,10 +27,11 @@ class ResourceSearchPage extends StatefulWidget {
 class _ResourceSearchPageState extends State<ResourceSearchPage> {
   final TextEditingController _keyword = TextEditingController();
   final List<ResourceResult> _results = [];
+  final List<OnlineBookHit> _onlineHits = [];
   String? _progress;
   bool _searching = false;
 
-  /// 正在转存的那本书（bookId）。用整页级布尔量会让所有卡片一起转圈。
+  /// 正在转存/加入书架的那本书（key）。用整页级布尔量会让所有卡片一起转圈。
   String? _shelvingKey;
 
   /// 转存目标目录。null = 用夸克的「来自：分享」目录
@@ -95,9 +101,16 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
     setState(() {
       _searching = true;
       _results.clear();
+      _onlineHits.clear();
       _progress = '准备…';
     });
     final service = context.read<ResourceSearchService>();
+    // 在线书源（听书网站）与夸克源并行搜索，先出的结果先展示
+    final onlineFuture = service.searchOnline(kw).then((hits) {
+      if (mounted) setState(() => _onlineHits.addAll(hits));
+    }).catchError((e) {
+      debugPrint('[ResourceSearch] online: $e');
+    });
     final list = await service.search(
       kw,
       maxParse: 8,
@@ -113,6 +126,7 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
         });
       },
     );
+    await onlineFuture;
     if (mounted) {
       setState(() {
         _results
@@ -232,7 +246,19 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('全网搜书')),
+      appBar: AppBar(
+        title: const Text('全网搜书'),
+        actions: [
+          // 书源管理入口：显示当前启用数
+          IconButton(
+            icon: const Icon(Icons.travel_explore_rounded),
+            tooltip: '书源管理',
+            onPressed: () => context.pushThrottled(
+                MaterialPageRoute(builder: (_) => const BookSourcePage())),
+          ),
+          const SizedBox(width: 4),
+        ],
+      ),
       body: Column(
         children: [
           Padding(
@@ -308,16 +334,167 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
               ),
             ),
           Expanded(
-            child: _results.isEmpty && !_searching
+            child: _results.isEmpty && _onlineHits.isEmpty && !_searching
                 ? const Center(
-                    child: Text('从夸克网盘分享中搜索有声书\n结果可加入书架或直接播放',
+                    child: Text('从夸克网盘分享 / 在线听书站搜索有声书\n结果可加入书架或直接播放',
                         textAlign: TextAlign.center))
                 : ListView.builder(
-                    itemCount: _results.length,
-                    itemBuilder: (context, i) => _buildCard(_results[i]),
+                    // 在线书源命中放最前（点击即播，不用转存网盘）
+                    itemCount: _onlineHits.length + _results.length,
+                    itemBuilder: (context, i) => i < _onlineHits.length
+                        ? _buildOnlineCard(_onlineHits[i])
+                        : _buildCard(_results[i - _onlineHits.length]),
                   ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 在线书源命中的书 id：online_{书源id}_{详情页路径}
+  String _onlineBookIdFor(OnlineBookHit h) {
+    final uri = Uri.tryParse(h.detailUrl);
+    final path = (uri?.path ?? h.detailUrl)
+        .replaceAll(RegExp(r'^/+|/+$'), '');
+    return 'online_${h.source}_$path';
+  }
+
+  /// 在线书加入书架（可选立即播放）：
+  /// 解析详情页章节列表（播放页地址）存进书架，音频直链播放时再懒解析。
+  Future<bool> _shelveOnline(OnlineBookHit h, {bool play = false}) async {
+    if (_shelvingKey != null) return false;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _shelvingKey = _onlineBookIdFor(h));
+    try {
+      final service = context.read<ResourceSearchService>();
+      final repo = context.read<BookshelfRepository>();
+      final player = context.read<AudioPlayerService>();
+      setState(() => _progress = '正在解析「${h.title}」的章节列表…');
+      OnlineBookDetail detail;
+      try {
+        detail = await service.resolveOnlineChapters(h);
+      } catch (e) {
+        if (mounted) setState(() => _progress = null);
+        messenger.showSnackBar(SnackBar(content: Text('解析章节失败：$e')));
+        return false;
+      }
+      if (mounted) setState(() => _progress = null);
+      if (detail.chapters.isEmpty) {
+        messenger.showSnackBar(const SnackBar(content: Text('该书没有解析到章节')));
+        return false;
+      }
+
+      final bookId = _onlineBookIdFor(h);
+      final chapters = [
+        for (final (i, c) in detail.chapters.indexed)
+          Chapter(
+            filename: c.url,
+            title: _cleanOnlineTitle(h.title, c.title, i),
+            duration: Duration.zero,
+            // shareUrl 存书源 id：播放器懒解析时据此找规则
+            shareUrl: h.source,
+          ),
+      ];
+      await repo.add(BookshelfBook(
+        id: bookId,
+        title: h.title,
+        author: detail.author ?? h.author,
+        chapterCount: chapters.length,
+        isLocal: false,
+        shareUrl: h.detailUrl,
+        chapters: chapters,
+      ));
+      if (play) {
+        await player.playBook(Book(
+          id: bookId,
+          title: h.title,
+          author: detail.author ?? h.author,
+          chapters: chapters,
+        ));
+        if (mounted) context.pushPlayerPage();
+      }
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(
+          content: Text(play
+              ? '已开始播放「${h.title}」'
+              : '「${h.title}」已加入书架（${chapters.length} 集）'),
+        ));
+      }
+      return true;
+    } finally {
+      if (mounted) setState(() => _shelvingKey = null);
+    }
+  }
+
+  /// 章节标题去重书名前缀：详情页 title 常是「书名 章节名」。
+  String _cleanOnlineTitle(String bookTitle, String rawTitle, int index) {
+    var t = rawTitle;
+    if (t.startsWith('$bookTitle ')) {
+      t = t.substring(bookTitle.length + 1);
+    } else if (t.startsWith(bookTitle)) {
+      t = t.substring(bookTitle.length);
+    }
+    t = t.trim();
+    return t.isEmpty ? '第 ${index + 1} 集' : t;
+  }
+
+  Widget _buildOnlineCard(OnlineBookHit h) {
+    final theme = Theme.of(context);
+    final inShelf =
+        context.read<BookshelfRepository>().isInShelf(_onlineBookIdFor(h));
+    final sourceName = context
+            .read<BookSourceRepository>()
+            .all
+            .where((s) => s.id == h.source)
+            .firstOrNull
+            ?.name ??
+        h.source;
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: ListTile(
+        leading: Icon(Icons.headphones_rounded,
+            color: theme.colorScheme.primary),
+        title: Text(
+          h.title,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontWeight: FontWeight.w600),
+        ),
+        subtitle: Text(
+          '$sourceName · 在线收听${h.author != null && h.author!.isNotEmpty ? ' · ${h.author}' : ''}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_shelvingKey == _onlineBookIdFor(h))
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 14),
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2.5),
+                ),
+              )
+            else ...[
+              if (!inShelf)
+                IconButton(
+                  icon: const Icon(Icons.add_rounded),
+                  tooltip: '加入书架',
+                  onPressed:
+                      _shelvingKey != null ? null : () => _shelveOnline(h),
+                ),
+              IconButton(
+                icon: const Icon(Icons.play_arrow_rounded),
+                tooltip: '播放',
+                onPressed: _shelvingKey != null
+                    ? null
+                    : () => _shelveOnline(h, play: true),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -382,6 +559,13 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
   }
 
   String _sourceLabel(String source) {
+    // 书源名优先（含自定义源），找不到再回退到内置渠道的旧映射
+    final s = context
+        .read<BookSourceRepository>()
+        .all
+        .where((s) => s.id == source)
+        .firstOrNull;
+    if (s != null) return s.name;
     switch (source) {
       case 'bilibili':
         return 'B站';

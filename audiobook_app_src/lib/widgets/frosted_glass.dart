@@ -113,23 +113,9 @@ class FrostedGlassContainer extends StatelessWidget {
             decoration: BoxDecoration(
               color: theme.background.withValues(alpha: theme.backgroundAlpha),
               borderRadius: BorderRadius.circular(borderRadius),
-              border: Border(
-                top: BorderSide(
-                  color: theme.highlight.withValues(alpha: theme.highlightAlpha),
-                  width: 0.5,
-                ),
-                left: BorderSide(
-                  color: theme.border.withValues(alpha: theme.borderAlpha),
-                  width: 0.5,
-                ),
-                right: BorderSide(
-                  color: theme.border.withValues(alpha: theme.borderAlpha),
-                  width: 0.5,
-                ),
-                bottom: BorderSide(
-                  color: theme.border.withValues(alpha: theme.borderAlpha),
-                  width: 0.5,
-                ),
+              border: Border.all(
+                color: theme.border.withValues(alpha: theme.borderAlpha),
+                width: 0.5,
               ),
             ),
             child: child,
@@ -171,23 +157,9 @@ class GlassSurface extends StatelessWidget {
           decoration: BoxDecoration(
             color: theme.background.withValues(alpha: theme.surfaceAlpha),
             borderRadius: BorderRadius.circular(borderRadius),
-            border: Border(
-              top: BorderSide(
-                color: theme.highlight.withValues(alpha: theme.highlightAlpha),
-                width: 0.5,
-              ),
-              left: BorderSide(
-                color: theme.border.withValues(alpha: theme.borderAlpha),
-                width: 0.5,
-              ),
-              right: BorderSide(
-                color: theme.border.withValues(alpha: theme.borderAlpha),
-                width: 0.5,
-              ),
-              bottom: BorderSide(
-                color: theme.border.withValues(alpha: theme.borderAlpha),
-                width: 0.5,
-              ),
+            border: Border.all(
+              color: theme.border.withValues(alpha: theme.borderAlpha),
+              width: 0.5,
             ),
           ),
           child: child,
@@ -223,7 +195,13 @@ Future<T?> showFrostedBottomSheet<T>({
     builder: (ctx) {
       return FrostedGlassContainer(
         borderRadius: 24,
-        child: builder(ctx),
+        // 面板内的 ListTile 要在最近的 Material 上画底色/水波纹。
+        // 若不垫这一层，它会落到面板外的 Material 上，既被本容器的
+        // DecoratedBox 底色盖住，也会触发 debug 断言（红框糊住面板）。
+        child: Material(
+          type: MaterialType.transparency,
+          child: builder(ctx),
+        ),
       );
     },
   );

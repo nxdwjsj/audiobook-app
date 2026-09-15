@@ -53,3 +53,9 @@ tool/out_*.json
 
 # 调试截图（adb screencap 临时产物）
 /*.png
+
+# 站点探测临时产物（HTML 样本与探测脚本，可随时重新生成）
+tool/s*.html
+s*_*.html
+tool/probe_sites*.ps1
+tool/debug_ps1.ps1

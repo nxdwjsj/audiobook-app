@@ -22,6 +22,11 @@ import 'storage_service.dart';
 typedef StreamUrlResolverWithHeaders =
     Future<ResolvedStream?> Function(Chapter chapter);
 
+/// 在线书源章节懒解析：播放页地址 → 音频直链。
+/// 由 main.dart 注入（依赖 BookSourceRepository，播放器自身不持有）。
+typedef OnlineAudioResolver =
+    Future<String?> Function(String sourceId, String chapterUrl);
+
 /// Manages audio playback state and controls.
 /// Uses just_audio for playback and audio_service for MediaSession / notification.
 /// 不直接继承 AudioHandler（Provider 要求 ChangeNotifier，而 BaseAudioHandler
@@ -108,6 +113,16 @@ class AudioPlayerService extends ChangeNotifier {
   /// Resolver for cloud drive audio stream URLs.
   /// Set by the app during initialization to connect drive services.
   StreamUrlResolverWithHeaders? streamUrlResolver;
+
+  /// 在线书源章节懒解析：播放页 URL → 音频直链（由 main.dart 注入）。
+  /// chapter.filename 存播放页地址，解析结果缓存在 [_onlineAudioCache]。
+  OnlineAudioResolver? onlineAudioResolver;
+
+  /// 在线书音频直链缓存：key = 播放页 URL。同一章重播/回退不再抓页面。
+  final _onlineAudioCache = <String, String>{};
+
+  /// 预加载中的在线章节（防并发重复请求同一播放页）。
+  final _onlineAudioPending = <String, Future<String>>{};
 
   /// Error message from the last failed load, for UI display.
   String? lastError;
@@ -466,6 +481,42 @@ class AudioPlayerService extends ChangeNotifier {
     return null;
   }
 
+  /// 在线章节懒解析：播放页 → 音频直链（缓存 + 并发去重）。
+  /// [shareUrl] 存书源 id（加入书架时写入），resolver 据此找到对应规则。
+  Future<String> _resolveOnlineAudio(Chapter chapter) async {
+    final url = chapter.filename;
+    final cached = _onlineAudioCache[url];
+    if (cached != null) return cached;
+    // 已有同 URL 请求在途 → 复用，不重复抓播放页
+    final pending = _onlineAudioPending[url];
+    if (pending != null) return pending;
+    final resolver = onlineAudioResolver;
+    if (resolver == null) {
+      throw StateError('未配置在线书源解析器');
+    }
+    final sourceId = chapter.shareUrl ?? '';
+    final future = resolver(sourceId, url).then((audio) {
+      if (audio == null || audio.isEmpty) {
+        throw StateError('在线书源没有解析出音频地址');
+      }
+      _onlineAudioCache[url] = audio;
+      return audio;
+    }).whenComplete(() => _onlineAudioPending.remove(url));
+    _onlineAudioPending[url] = future;
+    return future;
+  }
+
+  /// 在线书的防盗链 Referer：音频与章节所在站点同源时，取章节地址所在目录。
+  /// 跨域（如 CDN 域名与站点不同）时不带，避免被 CDN 拒绝。
+  String? _onlineRefererFor(Uri audioUri, String? chapterUrl) {
+    if (chapterUrl == null || chapterUrl.isEmpty) return null;
+    final chapter = Uri.tryParse(chapterUrl);
+    if (chapter == null || chapter.host != audioUri.host) return null;
+    final segs = chapter.pathSegments.toList();
+    if (segs.isNotEmpty) segs.removeLast();
+    return chapter.replace(pathSegments: segs, query: null).toString();
+  }
+
   Future<void> _loadCurrentChapter() async {
     if (_currentBook == null || _chapters.isEmpty) return;
 
@@ -559,6 +610,42 @@ class AudioPlayerService extends ChangeNotifier {
         );
       } catch (e) {
         lastError = '加载音频失败: $e';
+        debugPrint('[Player] $lastError');
+        notifyListeners();
+        return;
+      }
+    } else if (_currentBook!.id.startsWith('online_')) {
+      // 在线书源的书：chapter.filename 是章节地址（播放页或音频直链）。
+      // 播放页需懒解析出音频直链（部分站点校验 Referer/UA 防盗链）。
+      try {
+        final audioUrl = await _resolveOnlineAudio(chapter);
+        final uri = Uri.parse(audioUrl);
+        if (!uri.isAbsolute ||
+            (uri.scheme != 'http' && uri.scheme != 'https')) {
+          throw const FormatException('章节地址不是有效的 http 链接');
+        }
+        final referer = _onlineRefererFor(uri, chapter.filename);
+        loadedDuration = await _player
+            .setAudioSource(
+              AudioSource.uri(
+                uri,
+                headers: {
+                  'User-Agent':
+                      'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 '
+                          '(KHTML, like Gecko) Chrome/131.0.0.0 Mobile '
+                          'Safari/537.36',
+                  if (referer != null) 'Referer': referer,
+                },
+              ),
+            )
+            .timeout(const Duration(seconds: 20));
+      } on TimeoutException {
+        lastError = '连接在线书源超时';
+        debugPrint('[Player] $lastError');
+        notifyListeners();
+        return;
+      } catch (e) {
+        lastError = '加载在线音频失败: $e';
         debugPrint('[Player] $lastError');
         notifyListeners();
         return;

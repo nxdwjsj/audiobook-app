@@ -42,27 +42,47 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
   /// 行 key：分页 + 精确定位都靠它做 ensureVisible。
   final Map<int, GlobalKey> _chapterRowKeys = {};
 
-  /// 实时从书架读取最新数据（编辑信息、进度缓存变化后立即同步）。
-  BookshelfBook get _book =>
-      context.read<BookshelfRepository>().getById(widget.book.id) ??
-      widget.book;
+  late final BookshelfRepository _shelfRepo;
+
+  /// 本页书籍数据缓存。
+  ///
+  /// storage 里存的是 JSON Map，每次 getById 都要重建整本书（含几千集章节），
+  /// 而本页在滑动中会反复读取它（分页条每页一个 chip、倒序时每行版本号、
+  /// 头部信息）。所以只在书架数据真正变化时重解析一次，其余时候复用，
+  /// 否则滑动时每次都做一遍全量反序列化，表现为明显卡顿。
+  late BookshelfBook _cachedBook;
+
+  /// 实时从书架读取最新数据（编辑信息、加入移出后立即同步）。
+  BookshelfBook get _book => _cachedBook;
 
   @override
   void initState() {
     super.initState();
+    _shelfRepo = context.read<BookshelfRepository>();
+    _cachedBook = _readBook();
+    _shelfRepo.addListener(_onShelfChanged);
     // 章节列表渲染后定位到正在播放的章节
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToPlaying());
   }
 
+  BookshelfBook _readBook() =>
+      _shelfRepo.getById(widget.book.id) ?? widget.book;
+
+  void _onShelfChanged() {
+    if (!mounted) return;
+    setState(() => _cachedBook = _readBook());
+  }
+
   @override
   void dispose() {
+    _shelfRepo.removeListener(_onShelfChanged);
     _scrollController.dispose();
     super.dispose();
   }
 
   int get _pageCount => (_chapters.length / _pageSize).ceil().clamp(1, 99999);
 
-  List<Chapter> get _chapters => _book.chapters ?? const [];
+  List<Chapter> get _chapters => _cachedBook.chapters ?? const [];
 
   /// 当前页要显示的章节（已应用排序）。
   List<Chapter> get _displayChapters {
@@ -138,9 +158,13 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    // watch 书架数据：编辑信息/加入移出后本页立即同步
-    context.watch<BookshelfRepository>();
-    final player = context.watch<AudioPlayerService>();
+    // 只订阅「当前播放的书 + 章节号」：播放服务每秒都会推送位置变化，
+    // 直接 watch 会让整页（含几百行目录）跟着每秒重建一次。
+    // 书架数据的变化由 initState 里的 listener 单独处理（见 _onShelfChanged）。
+    context.select<AudioPlayerService, (String?, int)>(
+      (p) => (p.currentBook?.id, p.currentChapterIndex),
+    );
+    final player = context.read<AudioPlayerService>();
     final progress = context.watch<ProgressRepository>().getProgress(_book.id);
     final isCurrent = player.hasBook && player.currentBook!.id == _book.id;
 
@@ -193,7 +217,8 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
   Widget _buildBody(BuildContext context, bool isCurrent,
       AudioPlayerService player, PlaybackProgress? progress) {
     final chapters = _displayChapters;
-    // 头部信息（封面/简介）+ 统计 + 目录标题（+分页条）+ 当前页章节行
+    // 行内高频用到的值先取好，避免每行都做一次 InheritedWidget 查找
+    final primary = Theme.of(context).colorScheme.primary;
     const headerCount = 4; // header + stats + 目录标题 + 分页条
     return Stack(
       children: [
@@ -230,8 +255,7 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
               key: _chapterRowKeys[chapterIndex] ??= GlobalKey(),
               dense: true,
               leading: isPlayingChapter
-                  ? Icon(Icons.graphic_eq_rounded,
-                      color: Theme.of(context).colorScheme.primary)
+                  ? Icon(Icons.graphic_eq_rounded, color: primary)
                   : Text('${chapterIndex + 1}'),
               title: Text(
                 chapter.title,
@@ -240,9 +264,7 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
                 style: TextStyle(
                   fontWeight:
                       isPlayingChapter ? FontWeight.bold : FontWeight.normal,
-                  color: isPlayingChapter
-                      ? Theme.of(context).colorScheme.primary
-                      : null,
+                  color: isPlayingChapter ? primary : null,
                 ),
               ),
               trailing: isPlayingChapter
@@ -250,7 +272,7 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
                       '正在播放',
                       style: TextStyle(
                         fontSize: 11,
-                        color: Theme.of(context).colorScheme.primary,
+                        color: primary,
                       ),
                     )
                   : null,
@@ -292,6 +314,8 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
   /// 分页条：1-300 / 301-600 / …，点击切换当前显示的章节区间。
   Widget _buildPageSelector(BuildContext context) {
     if (_pageCount <= 1) return const SizedBox.shrink();
+    // 每个 chip 都要判断「是不是在播放页」，这里整体算一次就够
+    final playingPage = _playingPageIndex;
     return SizedBox(
       height: 44,
       child: ListView.builder(
@@ -302,7 +326,7 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
           final s = i * _pageSize + 1;
           final e = ((i + 1) * _pageSize).clamp(0, _chapters.length);
           final selected = i == _page;
-          final isPlayingPage = i == _playingPageIndex;
+          final isPlayingPage = i == playingPage;
           return Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4),
             child: ChoiceChip(
