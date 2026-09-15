@@ -12,6 +12,7 @@ import '../models/playback_progress.dart';
 import '../repositories/listen_session_repository.dart';
 import '../repositories/progress_repository.dart';
 import '../repositories/stats_repository.dart';
+import '../pages/player_page.dart';
 import 'cloud_drive_service.dart';
 import 'storage_service.dart';
 
