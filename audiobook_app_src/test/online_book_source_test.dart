@@ -209,6 +209,7 @@ void main() {
           r'"novel":\s*\{\s*"name":"([^"]+)"[^{}]*?"url":"([^"]+)"',
       onlineBookTitleGroup: 1,
       onlineBookUrlGroup: 2,
+      onlineBookAuthorPattern: r'"author":\{"name":"([^"]*)"',
       onlineDirPattern: r'href="(/tingdirs/[^"]+\.html)"',
       onlineDirPageParam: 'page',
       onlineDirMaxPages: 80,
@@ -252,6 +253,34 @@ void main() {
     test('resolveUrl 还原被转义的斜杠', () {
       expect(resolveUrl('https://m.i275.com/a/b.html', r'\/book\/138.html'),
           'https://m.i275.com/book/138.html');
+    });
+
+    test('搜索结果能取到作者：author 在 novel 之后，按「本条到下一条」片段取', () {
+      // 真实结构：...,"boyin":{"name":演播},"novel":{...,"url":...},"author":{"name":作者}
+      const raw = '[{"data":{"allvisit":"7.35\\u4e07"},'
+          '"boyin":{"name":"cv\\u5c0f\\u5200"},'
+          '"novel":{"name":"\\u4ece\\u9f99\\u65cf\\u5f00\\u59cb","url":"\\/youshengxiaoshuo\\/26671\\/","intro":"x"},'
+          '"author":{"name":"\\u8d77\\u98de\\u7684\\u5927\\u8c61"},"cover":{"src":"y"}},'
+          '{"data":{"allvisit":"1\\u4e07"},"boyin":{"name":"cvA"},'
+          '"novel":{"name":"\\u9f99\\u65cf","url":"\\/youshengxiaoshuo\\/38968\\/","intro":"z"},'
+          '"author":{"name":"\\u4f5a\\u540d"},"cover":{"src":"w"}}]';
+      // 引擎会先做一次「解码再编码」归一化
+      final text = jsonEncode(jsonDecode(raw));
+      final bookRe = RegExp(t13Source.onlineBookPattern!);
+      final authorRe = RegExp(t13Source.onlineBookAuthorPattern!);
+      final matches = bookRe.allMatches(text).toList();
+      expect(matches.length, 2);
+
+      // 模拟引擎的取法：在本条到下一条之间的片段里找
+      String authorAt(int i) {
+        final start = matches[i].start;
+        final end =
+            i + 1 < matches.length ? matches[i + 1].start : text.length;
+        return authorRe.firstMatch(text.substring(start, end))?.group(1) ?? '';
+      }
+
+      expect(authorAt(0), '起飞的大象');
+      expect(authorAt(1), '佚名');
     });
 
     test('详情页能抠出完整目录链接', () {
@@ -330,6 +359,7 @@ void main() {
           r'<a href="(/book/\d+\.html)" class="flex p-4[\s\S]{0,900}?<h3[^>]*>([^<]+)</h3>',
       onlineBookTitleGroup: 2,
       onlineBookUrlGroup: 1,
+      onlineBookAuthorPattern: r'演播</span>\s*([^<]+)',
       onlineChapterPattern:
           r'<a id="chapter-pos-\d+"\s*href="(/play/\d+/\d+\.html)"[\s\S]{0,400}?<span class="text-sm text-gray-700 truncate">([^<]+)</span>',
       onlineChapterTitleGroup: 2,
@@ -354,6 +384,28 @@ void main() {
       expect(m, isNotNull);
       expect(m!.group(1), '/book/138.html');
       expect(m.group(2), '龙族');
+    });
+
+    test('搜索结果能取到演播（在书名之后，同一片段内）', () {
+      const html = '''
+        <a href="/book/138.html" class="flex p-4 gap-4 active:bg-gray-50 transition">
+          <div class="w-20 h-28"><img src="x.jpeg" class="w-full h-full" alt="龙族"></div>
+          <div class="flex-1 min-w-0">
+            <h3 class="text-base font-bold text-gray-800 truncate">龙族</h3>
+            <div class="flex flex-col gap-1 mt-1">
+              <p class="text-xs text-gray-500">
+                <span class="bg-gray-100 px-1.5 py-0.5 rounded text-gray-600 mr-2">演播</span>紫襟剧社                            </p>
+              <p class="text-xs text-gray-500">
+                <span class="bg-gray-100 px-1.5 py-0.5 rounded text-gray-600 mr-2">作者</span>佚名</p>
+            </div>
+      ''';
+      final bookRe = RegExp(i275Source.onlineBookPattern!);
+      final authorRe = RegExp(i275Source.onlineBookAuthorPattern!);
+      final m = bookRe.firstMatch(html);
+      expect(m, isNotNull);
+      final am = authorRe.firstMatch(html.substring(m!.start));
+      expect(am, isNotNull);
+      expect(am!.group(1)!.trim(), '紫襟剧社');
     });
 
     test('详情页章节：一页全量、正序、标题取 truncate 那个 span', () {

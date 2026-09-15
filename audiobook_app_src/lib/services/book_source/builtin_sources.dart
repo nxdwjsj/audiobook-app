@@ -147,6 +147,9 @@ const List<BookSource> kBuiltinBookSources = [
         r'"novel":\s*\{\s*"name":"([^"]+)"[^{}]*?"url":"([^"]+)"',
     onlineBookTitleGroup: 1,
     onlineBookUrlGroup: 2,
+    // 作者：...,"author":{"name":"起飞的大象"},"cover":{...}
+    // （同一段里还有 boyin.name 是演播者，需要的话换成正则即可）
+    onlineBookAuthorPattern: r'"author":\{"name":"([^"]*)"',
     maxLinks: 10,
     delayMs: 120,
     // 详情页只列最新 10 章，完整目录在 /tingdirs/：
@@ -193,6 +196,8 @@ const List<BookSource> kBuiltinBookSources = [
         r'<a href="(/book/\d+\.html)" class="flex p-4[\s\S]{0,900}?<h3[^>]*>([^<]+)</h3>',
     onlineBookTitleGroup: 2,
     onlineBookUrlGroup: 1,
+    // 封面下方：<span …>演播</span>紫襟剧社</p>
+    onlineBookAuthorPattern: r'演播</span>\s*([^<]+)',
     maxLinks: 10,
     delayMs: 150,
     // 详情页一页给全（实测 1100+ 集，无需翻页）：

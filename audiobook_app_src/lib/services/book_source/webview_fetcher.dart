@@ -234,8 +234,9 @@ window.$key = null;
   /// 适合「同一个模板翻几十页」的目录抓取。单页失败返回空串，不影响其它页。
   Future<List<String>> fetchTextMany(
     List<String> urls, {
-    int batchSize = 6,
-    Duration timeout = const Duration(seconds: 60),
+    int batchSize = 3,
+    int gapMs = 250,
+    Duration timeout = const Duration(seconds: 90),
   }) {
     if (urls.isEmpty) return Future.value(const <String>[]);
     return _serialize(() async {
@@ -259,7 +260,7 @@ window.$key = null;
         .catch(function () { return ''; });
     })).then(function (part) {
       out = out.concat(part);
-      step(i + size);
+      setTimeout(function () { step(i + size); }, $gapMs);
     });
   }
   step(0);

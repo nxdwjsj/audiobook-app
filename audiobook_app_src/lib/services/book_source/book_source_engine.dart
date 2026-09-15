@@ -44,6 +44,7 @@ class BookSourceEngine {
       },
       onResponse: (response, handler) {
         _collectCookies(response.headers['set-cookie']);
+        _markSession();
         handler.next(response);
       },
     ));
@@ -92,6 +93,20 @@ class BookSourceEngine {
     final uri = Uri.tryParse(source.urlTemplate);
     final host = uri?.host ?? '';
     return host.isEmpty ? source.id : host;
+  }
+
+  /// 各站点会话最近一次刷新的时间（跨实例共享，避免反复预热）。
+  static final Map<String, DateTime> _sessionBuiltAt = {};
+
+  /// 会话是否还算新鲜：新近建立过就不用重复去站点首页预热。
+  bool get _sessionFresh {
+    final at = _sessionBuiltAt[_originHost];
+    if (at == null) return false;
+    return DateTime.now().difference(at) < const Duration(minutes: 20);
+  }
+
+  void _markSession() {
+    _sessionBuiltAt[_originHost] = DateTime.now();
   }
 
   /// 被反爬挡住的特征：挑战脚本或过短响应（403 拦截页只有一百多字节）。
@@ -180,6 +195,22 @@ class BookSourceEngine {
     return out;
   }
 
+  /// 取第 [index] 条搜索结果的作者/演播。
+  ///
+  /// 只在本条结果到下一结果之间的片段里找，避免串到别的条目上。
+  String? _authorFor(String text, List<RegExpMatch> matches, int index) {
+    final pattern = source.onlineBookAuthorPattern;
+    if (pattern == null || pattern.isEmpty) return null;
+    final start = matches[index].start;
+    final end =
+        index + 1 < matches.length ? matches[index + 1].start : text.length;
+    if (end <= start) return null;
+    final segment = text.substring(start, end);
+    final m = RegExp(pattern).firstMatch(segment);
+    final raw = (m?.group(1) ?? '').trim();
+    return raw.isEmpty ? null : decodeHtmlEntities(raw);
+  }
+
   // ------------------------------------------------------------------
   // online 型：在线听书站
   // ------------------------------------------------------------------
@@ -201,7 +232,9 @@ class BookSourceEngine {
       for (final variant in variants) {
         try {
           final text = _extractText(await _fetchSearchPage(q, variant));
-          for (final m in bookRe.allMatches(text)) {
+          final matches = bookRe.allMatches(text).toList();
+          for (var i = 0; i < matches.length; i++) {
+            final m = matches[i];
             final url = resolveUrl(
                 source.urlTemplate, m.group(source.onlineBookUrlGroup) ?? '');
             if (url.isEmpty || !seenUrl.add(url)) continue;
@@ -217,6 +250,7 @@ class BookSourceEngine {
               source: source.id,
               detailUrl: url,
               title: title,
+              author: _authorFor(text, matches, i),
             ));
             if (out.length >= source.maxLinks * 2) break;
           }
@@ -234,7 +268,7 @@ class BookSourceEngine {
   /// 配了 [BookSource.onlineDirPattern] 时，会再进「完整目录」页（支持分页），
   /// 因为详情页通常只列最新几章。
   Future<OnlineBookDetail> fetchOnlineChapters(String detailUrl) async {
-    final detailHtml = await _get(
+    var detailHtml = await _get(
       detailUrl,
       headers: source.detailHeaders,
       referer: source.onlineReferer ?? _dirOf(detailUrl),
@@ -242,18 +276,35 @@ class BookSourceEngine {
     final dirRe = _onlineDirRe;
     if (dirRe == null) return parseOnlineDetail(detailHtml, detailUrl);
 
-    final rawDir = dirRe.firstMatch(detailHtml)?.group(1) ?? '';
+    var rawDir = dirRe.firstMatch(detailHtml)?.group(1) ?? '';
+    if (rawDir.isEmpty && parseOnlineDetail(detailHtml, detailUrl).chapters.isEmpty) {
+      // 详情页既没有目录链接也没有章节 —— 大概率拿到的是风控/挑战页，
+      // 用真实导航再抓一次（只有导航才会执行站点的挑战脚本）
+      final retry = await _retryByNavigation(detailUrl);
+      if (retry != null) {
+        detailHtml = retry;
+        rawDir = dirRe.firstMatch(detailHtml)?.group(1) ?? '';
+      }
+    }
     if (rawDir.isEmpty) {
       debugPrint('[BookSource ${source.id}] 详情页未匹配到完整目录链接，改用详情页章节');
       return parseOnlineDetail(detailHtml, detailUrl);
     }
     final dirUrl = resolveUrl(detailUrl, rawDir);
-    final firstPage = await _get(
+    var firstPage = await _get(
       dirUrl,
       headers: source.detailHeaders,
       referer: detailUrl,
     );
-    final detail = parseOnlineDetail(firstPage, dirUrl);
+    var detail = parseOnlineDetail(firstPage, dirUrl);
+    if (detail.chapters.isEmpty) {
+      // 页面有内容但解析不出章节，同上：改用导航重试
+      final retry = await _retryByNavigation(dirUrl);
+      if (retry != null) {
+        firstPage = retry;
+        detail = parseOnlineDetail(firstPage, dirUrl);
+      }
+    }
     final pageParam = source.onlineDirPageParam;
     if (pageParam == null || detail.chapters.isEmpty) {
       return OnlineBookDetail(author: detail.author, chapters: detail.chapters);
@@ -289,8 +340,8 @@ class BookSourceEngine {
   }
 
   /// 目录翻页时一批抓多少页（仅 WebView 通道真正并发；结果要一次性经
-  /// JS 桥传回，所以别开太大）。
-  static const int _dirBatchSize = 6;
+  /// JS 桥传回，所以别开太大）。并发太高容易被站点风控，3 是实测较稳的量。
+  static const int _dirBatchSize = 3;
 
   /// 批量抓取。WebView 通道走页面内并发 fetch，其余退化为串行 HTTP。
   Future<List<String>> _getMany(List<String> urls, {String? referer}) async {
@@ -300,10 +351,25 @@ class BookSourceEngine {
         WebViewFetcher.instance.sessionMatches(urls.first)) {
       try {
         final pages = await WebViewFetcher.instance.fetchTextMany(urls);
-        // 全空说明会话失效（页面还是 about:blank / 挑战 Cookie 过期）→
-        // 退回逐页走 _get（它会导航加载一次把会话建起来）
-        if (pages.any((p) => p.isNotEmpty)) return pages;
-        debugPrint('[BookSource ${source.id}] 批量抓取全空，退回逐页');
+        if (pages.any((p) => !_looksBlocked(p))) {
+          // 个别页被风控/挑战挡住（返回的是拦截页）→ 单独用导航方式补抓，
+          // 别让一整批都废掉
+          final out = List<String>.from(pages);
+          for (var i = 0; i < out.length; i++) {
+            if (!_looksBlocked(out[i])) continue;
+            try {
+              out[i] = await _get(
+                urls[i],
+                headers: source.detailHeaders,
+                referer: referer,
+              );
+            } catch (e) {
+              debugPrint('[BookSource ${source.id}] 补抓 ${urls[i]} 失败: $e');
+            }
+          }
+          return out;
+        }
+        debugPrint('[BookSource ${source.id}] 批量抓取全被拦，退回逐页');
       } catch (e) {
         debugPrint('[BookSource ${source.id}] 批量抓取失败，退回逐页: $e');
       }
@@ -361,6 +427,17 @@ class BookSourceEngine {
     if (audioRe == null) {
       throw StateError('该源未配置 onlineAudioPattern，无法解析播放页');
     }
+    // 纯 HTTP 的站点（如 275听书）播放页要求先有会话，没有就 302 回首页 ——
+    // 那种响应里当然没有音频地址。会话空着就先建一次，省掉一次注定失败的往返，
+    // 否则用户点一下没反应、得再点一次才行。
+    final root = _siteRootOf(chapterUrl);
+    if (!source.browserFetch && root.isNotEmpty && !_sessionFresh) {
+      try {
+        await _get(root, headers: source.detailHeaders);
+      } catch (e) {
+        debugPrint('[BookSource ${source.id}] 建会话失败（继续尝试播放页）: $e');
+      }
+    }
     final html = await _get(
       chapterUrl,
       headers: source.detailHeaders,
@@ -368,9 +445,7 @@ class BookSourceEngine {
     );
     var m = audioRe.firstMatch(html);
     if (m == null) {
-      // 有的站点（如 275听书）播放页要求先有会话，否则 302 回首页 —— 那种响应里
-      // 当然没有音频地址。先访问一次站点首页把会话建起来再重试。
-      final root = _siteRootOf(chapterUrl);
+      // 仍然没有音频 → 再走一遍「建会话 + 重试」
       if (root.isNotEmpty) {
         debugPrint('[BookSource ${source.id}] 播放页未取到音频，先访问 $root 建会话后重试');
         try {
@@ -433,13 +508,21 @@ class BookSourceEngine {
     String? referer,
   }) async {
     if (source.browserFetch && WebViewFetcher.isSupported) {
-      try {
-        final html = await _getViaBrowser(url);
-        if (!_looksBlocked(html)) return html;
-        debugPrint('[BookSource ${source.id}] WebView 拿到疑似拦截页，回退 HTTP: $url');
-      } catch (e) {
-        debugPrint('[BookSource ${source.id}] WebView 抓取失败，回退 HTTP: $e');
+      // 站点可能只是临时风控/挑战未通过：给一次稍等再试的机会，
+      // 两次都拿不到才退回普通 HTTP（那种情况下多半也是 403）
+      for (var attempt = 0; attempt < 2; attempt++) {
+        try {
+          final html = await _getViaBrowser(url);
+          if (!_looksBlocked(html)) return html;
+          debugPrint('[BookSource ${source.id}] WebView 拿到疑似拦截页（第 ${attempt + 1} 次）');
+        } catch (e) {
+          debugPrint('[BookSource ${source.id}] WebView 抓取失败（第 ${attempt + 1} 次）: $e');
+        }
+        if (attempt == 0) {
+          await Future.delayed(const Duration(milliseconds: 800));
+        }
       }
+      debugPrint('[BookSource ${source.id}] WebView 两次都没拿到内容，回退 HTTP: $url');
     }
     return _text(url, headers: {
       ...?headers,
@@ -465,6 +548,23 @@ class BookSourceEngine {
     final html = await fetcher.loadHtml(url);
     await _syncBrowserCookies(url);
     return html;
+  }
+
+  /// 解析不出章节时，用 WebView「导航」再抓一次。
+  ///
+  /// 站点在风控/挑战状态下会返回一个看起来正常、但没有实际内容的页面：
+  /// 页面内 fetch 拿不到真内容（不会执行挑战脚本、不会 reload），
+  /// 只有真正导航过去才会走完挑战流程。所以这里用导航重试。
+  Future<String?> _retryByNavigation(String url) async {
+    if (!source.browserFetch || !WebViewFetcher.isSupported) return null;
+    try {
+      debugPrint('[BookSource ${source.id}] 没解析出内容，改用导航重试: $url');
+      final html = await WebViewFetcher.instance.loadHtml(url);
+      return _looksBlocked(html) ? null : html;
+    } catch (e) {
+      debugPrint('[BookSource ${source.id}] 导航重试失败: $e');
+      return null;
+    }
   }
 
   /// 把 WebView 里的会话 Cookie 收进本地 jar，供 Dio 请求复用。

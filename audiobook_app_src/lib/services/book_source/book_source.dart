@@ -118,6 +118,13 @@ class BookSource {
   /// online：详情页作者正则（可选，仅用于展示）。
   final String? onlineAuthorPattern;
 
+  /// online：搜索结果里作者/演播的正则（捕获组 1 = 名称，可选）。
+  ///
+  /// 单独一条而不是塞进 [onlineBookPattern]：作者字段的位置各站不同
+  /// （有的在书名对象之后，有的在书名之后），塞一起会因个别条目缺字段
+  /// 导致整条结果匹配失败。引擎会在「本条结果到下一结果」的片段里找它。
+  final String? onlineBookAuthorPattern;
+
   /// online：详情页里「查看全部章节」链接的正则（捕获组 1 = 目录页地址）。
   /// 站点详情页往往只列最新 N 章，配了它才能拿到完整目录。
   final String? onlineDirPattern;
@@ -171,6 +178,7 @@ class BookSource {
     this.onlineChapterOrder = 'asc',
     this.onlineReferer,
     this.onlineAuthorPattern,
+    this.onlineBookAuthorPattern,
     this.onlineDirPattern,
     this.onlineDirPageParam,
     this.onlineDirMaxPages = 60,
@@ -228,6 +236,8 @@ class BookSource {
         if (onlineReferer != null) 'onlineReferer': onlineReferer,
         if (onlineAuthorPattern != null)
           'onlineAuthorPattern': onlineAuthorPattern,
+        if (onlineBookAuthorPattern != null)
+          'onlineBookAuthorPattern': onlineBookAuthorPattern,
         if (onlineDirPattern != null) 'onlineDirPattern': onlineDirPattern,
         if (onlineDirPageParam != null)
           'onlineDirPageParam': onlineDirPageParam,
@@ -370,6 +380,9 @@ class BookSource {
       onlineReferer: json['onlineReferer']?.toString(),
       onlineAuthorPattern: type == 'online'
           ? checkOnline('onlineAuthorPattern')
+          : null,
+      onlineBookAuthorPattern: type == 'online'
+          ? checkOnline('onlineBookAuthorPattern')
           : null,
       onlineDirPattern:
           type == 'online' ? checkOnline('onlineDirPattern') : null,
