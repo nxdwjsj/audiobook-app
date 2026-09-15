@@ -10,10 +10,10 @@
 一个 Flutter 有声书播放器（主用 Android 真机），核心能力是**直接播放网盘里的音频文件夹**，把网盘文件夹当作一本书来管理（目录、进度、续播、历史）。
 
 - 应用名：`audiobook_app`，显示名「聆云」
-- 版本：`1.0.8+9`
+- 版本：`1.0.9+10`
 - 平台目录：`android/`（主力）、`ios/`、`web/`（未验证）
-- **下载安装**：[Releases · 最新版](https://github.com/nxdwjsj/audiobook-app/releases/latest) → 点 `lingyun-v1.0.8.apk` 直接下载安装（release 构建、debug 签名、**仅 arm64**；约 20.5MB）
-- 仓库内另有副本：`releases/lingyun-v1.0.8.apk`
+- **下载安装**：[Releases · 最新版](https://github.com/nxdwjsj/audiobook-app/releases/latest) → 点 `lingyun-v1.0.9.apk` 直接下载安装（release 构建、debug 签名、**仅 arm64**；约 20.5MB）
+- 仓库内另有副本：`releases/lingyun-v1.0.9.apk`
 
 **技术栈**
 
@@ -312,6 +312,8 @@ box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `li
 | 懒加载列表（`ListView.builder`）定位失效 | `GlobalKey.currentContext` 只对**已构建**的行非空，目标行还在视口外时 `ensureVisible` 拿不到 context → 两段式：先按行高估算 `jumpTo` 把目标行搬进构建区，下一帧再 `ensureVisible` 精修（带重试上限防死循环） |
 | 网盘目录快速切换时"闪回旧目录" | 异步响应乱序：先发的慢响应后到，覆盖了新目录 → 加自增请求序号 `_loadSeq`，响应到达时序号不符即丢弃 |
 | gradle `splits.abi` 与 Flutter 构建冲突 | Flutter Gradle 插件按 `--target-platform` 设 ndk abiFilters，再在 `build.gradle.kts` 加 `splits` 会报 conflicting configuration → 减包体直接用 `flutter build apk --release --target-platform android-arm64`，**不要**改 splits |
+| `MaterialApp.builder` 里的全局组件跳转失效 | builder 的 child 与 Navigator 是 Stack 兄弟关系，组件的 context **不在 Navigator 子树内**，`Navigator.of(context)` / `context.push` 找不到导航器 → 用全局 `navigatorKey`（`GlobalKey<NavigatorState>`）挂到 `MaterialApp.navigatorKey` 上直取 NavigatorState |
+| 后台播完一集断播（“播放失败”） | 网盘 CDN 直链带签名有效期，预加载的下一章直链在后台长时间播放后过期，`setAudioSource` 抛错且无重试 → ① 使用缓存前解析 URL 的 `Expires` 参数，剩余 <2 分钟重新解析；② 切章失败按 3/6/9 秒退避静默重试（每次清缓存强制重新解析）；③ `AppLifecycleListener.onResume` 回前台补试 |
 
 ---
 
