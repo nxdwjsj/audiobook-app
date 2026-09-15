@@ -1,5 +1,6 @@
+import 'package:audio_service/audio_service.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:just_audio_background/just_audio_background.dart';
 import 'package:provider/provider.dart';
 
 import 'models/drive_item.dart';
@@ -8,7 +9,7 @@ import 'repositories/bookshelf_repository.dart';
 import 'repositories/listen_session_repository.dart';
 import 'repositories/progress_repository.dart';
 import 'repositories/stats_repository.dart';
-import 'services/audio_player_service.dart';
+import 'services/audio_player_service.dart' show AudioPlayerService, AppAudioHandler;
 import 'services/baidu_drive_service.dart';
 import 'services/local_import_service.dart';
 import 'services/quark_drive_service.dart';
@@ -21,15 +22,6 @@ import 'widgets/throttled_navigator.dart' show appNavigatorKey;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // 通知栏 / 锁屏播放控制（MediaSession）。必须在 runApp 之前初始化一次，
-  // 之后 AudioPlayer 的音频源只要带 MediaItem tag 就会自动出现在通知栏。
-  await JustAudioBackground.init(
-    androidNotificationChannelId: 'com.example.audiobook_app.channel.audio',
-    androidNotificationChannelName: '播放控制',
-    androidNotificationChannelDescription: '显示当前章节与播放进度',
-    androidNotificationOngoing: true,
-  );
 
   // 框架内部异常（红屏）默认不会把堆栈打到 logcat，这里显式打出来，
   // 否则真机上出问题只能看到红屏、拿不到堆栈。
@@ -49,11 +41,57 @@ void main() async {
 
   final storage = StorageService();
 
+  // ProgressRepository 需要先创建，传给 AudioPlayerService（AudioHandler）
+  final progressRepo = ProgressRepository(storage);
+
+  // 通知栏 / 锁屏播放控制（MediaSession）。必须在 runApp 之前初始化。
+  // 不再用 just_audio_background（Android 16 上 MediaSession 状态不更新），
+  // 改为手动 AudioService.init，由 AudioPlayerService 内部持有一个
+  // BaseAudioHandler 实例来推送播放状态。
+  final playerService = AudioPlayerService(progressRepo);
+  late final AppAudioHandler mediaSessionHandler;
+  await AudioService.init(
+    builder: () => mediaSessionHandler = AppAudioHandler(),
+    config: const AudioServiceConfig(
+      androidNotificationChannelId: 'com.example.audiobook_app.channel.audio',
+      androidNotificationChannelName: '播放控制',
+      androidNotificationChannelDescription: '显示当前章节与播放进度',
+      androidNotificationOngoing: true,
+    ),
+  );
+  playerService.bindMediaSessionHandler(mediaSessionHandler);
+
   // Create and initialize drive services
   final baiduDrive = BaiduDriveService(storage);
   final quarkDrive = QuarkDriveService(storage);
   await baiduDrive.init();
   await quarkDrive.init();
+
+  // 注入 AudioHandler 的依赖（原本在 Provider create 回调里做，现在提前到 main）
+  final sessionRepo = ListenSessionRepository(storage);
+  final statsRepo = StatsRepository(storage);
+  playerService.sessionRepo = sessionRepo;
+  playerService.statsRepo = statsRepo;
+  playerService.storage = storage;
+  playerService.streamUrlResolver = (chapter) async {
+    if (chapter.driveType == null || chapter.fileId == null) return null;
+    final isShare =
+        chapter.shareUrl != null && chapter.shareUrl!.isNotEmpty;
+    final service = chapter.driveType == DriveType.baidu
+        ? baiduDrive
+        : quarkDrive as CloudDriveService;
+    try {
+      if (isShare) {
+        return await service.getShareAudioStreamUrl(
+            chapter.shareUrl!, chapter.fileId!,
+            filename: chapter.filename);
+      }
+      return await service.getAudioStreamUrl(chapter.fileId!);
+    } catch (e, st) {
+      debugPrint('Stream URL resolution error: $e\n$st');
+      return null;
+    }
+  };
 
   runApp(
     MultiProvider(
@@ -61,14 +99,14 @@ void main() async {
         ChangeNotifierProvider<BookshelfRepository>(
           create: (_) => BookshelfRepository(storage),
         ),
-        ChangeNotifierProvider<ProgressRepository>(
-          create: (_) => ProgressRepository(storage),
+        ChangeNotifierProvider<ProgressRepository>.value(
+          value: progressRepo,
         ),
-        ChangeNotifierProvider<ListenSessionRepository>(
-          create: (_) => ListenSessionRepository(storage),
+        ChangeNotifierProvider<ListenSessionRepository>.value(
+          value: sessionRepo,
         ),
-        ChangeNotifierProvider<StatsRepository>(
-          create: (_) => StatsRepository(storage),
+        ChangeNotifierProvider<StatsRepository>.value(
+          value: statsRepo,
         ),
         Provider<LocalImportService>(
           create: (ctx) => LocalImportService(
@@ -83,43 +121,8 @@ void main() async {
         Provider<ResourceSearchService>(
           create: (_) => ResourceSearchService(quarkDrive),
         ),
-        ChangeNotifierProvider<AudioPlayerService>(
-          create: (ctx) {
-            final player = AudioPlayerService(
-              ctx.read<ProgressRepository>(),
-            );
-            // 历史会话：手动点播新建记录，自动连播只更新
-            player.sessionRepo = ctx.read<ListenSessionRepository>();
-            // 收听时长统计：按天 + 按书累计
-            player.statsRepo = ctx.read<StatsRepository>();
-            // 播放设置（跳过片头 / 跳过片尾秒数）
-            player.storage = storage;
-            // Set up stream URL resolver for cloud drive chapters.
-            player.streamUrlResolver = (chapter) async {
-              if (chapter.driveType == null || chapter.fileId == null) {
-                return null;
-              }
-              final isShare =
-                  chapter.shareUrl != null && chapter.shareUrl!.isNotEmpty;
-              // Route by the chapter's own provider — a Quark share must not
-              // be handed to the Baidu service (and vice-versa).
-              final service = chapter.driveType == DriveType.baidu
-                  ? ctx.read<BaiduDriveService>()
-                  : ctx.read<QuarkDriveService>() as CloudDriveService;
-              try {
-                if (isShare) {
-                  return await service.getShareAudioStreamUrl(
-                      chapter.shareUrl!, chapter.fileId!,
-                      filename: chapter.filename);
-                }
-                return await service.getAudioStreamUrl(chapter.fileId!);
-              } catch (e, st) {
-                debugPrint('Stream URL resolution error: $e\n$st');
-                return null;
-              }
-            };
-            return player;
-          },
+        ChangeNotifierProvider<AudioPlayerService>.value(
+          value: playerService,
         ),
       ],
       child: const AudiobookApp(),

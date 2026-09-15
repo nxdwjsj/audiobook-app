@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../repositories/stats_repository.dart';
+import '../widgets/frosted_glass.dart';
 
 /// 收听统计页：月度方格热力图（方格颜色越深 = 当天听得越久，
 /// 空白 = 当天没听）+ 累计总时长 + 单本时长排行。
@@ -65,7 +66,7 @@ class _StatsPageState extends State<StatsPage> {
       (i) => stats.secondsOn(DateTime(_month.year, _month.month, i + 1)),
     ).fold(0, (a, b) => a + b);
 
-    return Card(
+    return GlassSurface(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 14),
         child: Column(
@@ -260,7 +261,7 @@ class _StatsPageState extends State<StatsPage> {
     final total = stats.totalSeconds;
     final listenedDays = stats.listenedDays;
 
-    return Card(
+    return GlassSurface(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
         child: Row(
@@ -317,7 +318,7 @@ class _StatsPageState extends State<StatsPage> {
           ),
         ),
         if (books.isEmpty)
-          Card(
+          GlassSurface(
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 28),
               child: Center(
@@ -331,7 +332,7 @@ class _StatsPageState extends State<StatsPage> {
             ),
           )
         else
-          Card(
+          GlassSurface(
             child: Column(
               children: [
                 for (var i = 0; i < books.length; i++) ...[

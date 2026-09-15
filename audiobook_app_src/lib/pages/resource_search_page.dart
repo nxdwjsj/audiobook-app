@@ -8,6 +8,7 @@ import '../services/audio_player_service.dart';
 import '../services/quark_drive_service.dart';
 import '../services/resource_search_service.dart';
 import '../services/storage_service.dart';
+import '../widgets/frosted_glass.dart';
 import '../widgets/throttled_navigator.dart';
 
 /// 全网搜书：多渠道发现夸克网盘有声书分享，一键加入书架或直接播放。
@@ -57,9 +58,8 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
   /// 选择转存到网盘的哪个目录（记住选择，下次直接用）。
   Future<void> _pickSaveDir() async {
     final quark = context.read<QuarkDriveService>();
-    final picked = await showModalBottomSheet<(String, String)>(
+    final picked = await showFrostedBottomSheet<(String, String)>(
       context: context,
-      isScrollControlled: true,
       builder: (_) => _SaveDirPicker(quark: quark),
     );
     if (picked == null || !mounted) return;

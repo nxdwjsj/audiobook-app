@@ -5,6 +5,7 @@ import '../models/listen_session.dart';
 import '../repositories/bookshelf_repository.dart';
 import '../repositories/listen_session_repository.dart';
 import '../services/audio_player_service.dart';
+import '../widgets/frosted_glass.dart';
 import '../widgets/throttled_navigator.dart';
 import 'shelf_book_detail_page.dart';
 import 'player_page.dart';
@@ -57,9 +58,8 @@ class HistoryPage extends StatelessWidget {
                 ],
               ),
             )
-          : ListView.separated(
+          : ListView.builder(
               itemCount: sessions.length,
-              separatorBuilder: (_, __) => const Divider(height: 1, indent: 76),
               itemBuilder: (context, index) {
                 final s = sessions[index];
                 return _SessionTile(
@@ -72,20 +72,37 @@ class HistoryPage extends StatelessWidget {
   }
 
   Future<void> _confirmClear(BuildContext context, int count) async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showFrostedBottomSheet<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('清空收听历史'),
-        content: Text('将删除全部 $count 条会话记录（不影响书架和播放进度）'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+            child: Text('清空收听历史',
+                style: Theme.of(ctx).textTheme.titleMedium),
           ),
-          FilledButton.tonal(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('清空'),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+            child: Text('将删除全部 $count 条会话记录（不影响书架和播放进度）',
+                style: Theme.of(ctx).textTheme.bodyMedium),
           ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('取消'),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.tonal(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('清空'),
+              ),
+              const SizedBox(width: 24),
+            ],
+          ),
+          const SizedBox(height: 8),
         ],
       ),
     );
@@ -129,39 +146,64 @@ class _SessionTile extends StatelessWidget {
       onDismissed: (_) =>
           context.read<ListenSessionRepository>().delete(session.id),
       child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
         leading: Container(
           width: 48,
           height: 48,
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.primaryContainer,
+            color: Theme.of(context)
+                .colorScheme
+                .primary
+                .withValues(alpha: isCurrent ? 0.16 : 0.08),
             borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: Theme.of(context)
+                  .colorScheme
+                  .primary
+                  .withValues(alpha: isCurrent ? 0.4 : 0.22),
+            ),
           ),
           child: Icon(
             isCurrent
                 ? Icons.graphic_eq_rounded
                 : Icons.headphones_rounded,
-            color: Theme.of(context).colorScheme.onPrimaryContainer,
+            color: Theme.of(context).colorScheme.primary,
           ),
         ),
         title: Text(
           title,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontWeight: FontWeight.w500),
+          style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 15),
         ),
-        subtitle: Text(
-          '第 $chapterNo 章${chapterTitle != null ? ' · $chapterTitle' : ''}\n'
-          '${_fmtStart(session.startedAt)}开始 · 已听 ${_fmtDuration(session.positionSeconds)}'
-          '${percent != null ? '（$percent%）' : ''}',
-          maxLines: 3,
-          overflow: TextOverflow.ellipsis,
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            '第 $chapterNo 章${chapterTitle != null ? ' · $chapterTitle' : ''}\n'
+            '${_fmtStart(session.startedAt)} · ${_fmtDuration(session.positionSeconds)}'
+            '${percent != null ? '（$percent%）' : ''}',
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 13),
+          ),
         ),
         trailing: isCurrent
-            ? Text(
-                '正在播放',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: Theme.of(context).colorScheme.primary,
+            ? Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .primaryContainer
+                      .withValues(alpha: 0.6),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '正在播放',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
                 ),
               )
             : const Icon(Icons.play_circle_outline_rounded),

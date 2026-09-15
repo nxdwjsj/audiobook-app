@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../models/book.dart';
 import '../services/audio_player_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/frosted_glass.dart';
 
 class PlayerPage extends StatelessWidget {
   const PlayerPage({super.key});
@@ -118,8 +119,47 @@ class PlayerPage extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 20),
+                    // 自动重试提示：失败后静默重试期间给用户一个反馈，
+                    // 否则界面看起来像卡死（尤其校园网/CDN 域名解析抖动时）
+                    if (player.retrying)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 16),
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .secondaryContainer,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            children: [
+                              SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSecondaryContainer),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  '网络不稳定，正在自动重试…',
+                                  style: TextStyle(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSecondaryContainer),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     // Error banner
-                    if (player.lastError != null)
+                    if (player.lastError != null && !player.retrying)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 16),
                         child: Container(
@@ -227,15 +267,23 @@ class PlayerPage extends StatelessWidget {
 
     return Column(
       children: [
-        Slider(
-          value: value.clamp(0.0, 1.0),
-          onChanged: duration.inMilliseconds > 0
-              ? (v) {
-                  final newPos =
-                      Duration(milliseconds: (v * duration.inMilliseconds).toInt());
-                  player.seek(newPos);
-                }
-              : null,
+        // 使用SliderTheme优化滑块性能
+        SliderTheme(
+          data: SliderTheme.of(context).copyWith(
+            trackHeight: 4.0,
+            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8.0),
+            overlayShape: const RoundSliderOverlayShape(overlayRadius: 16.0),
+          ),
+          child: Slider(
+            value: value.clamp(0.0, 1.0),
+            onChanged: duration.inMilliseconds > 0
+                ? (v) {
+                    final newPos =
+                        Duration(milliseconds: (v * duration.inMilliseconds).toInt());
+                    player.seek(newPos);
+                  }
+                : null,
+          ),
         ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16.0),
@@ -252,14 +300,19 @@ class PlayerPage extends StatelessWidget {
   }
 
   Widget _buildControls(BuildContext context, AudioPlayerService player) {
+    final scheme = Theme.of(context).colorScheme;
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        IconButton(
-          icon: const Icon(Icons.skip_previous_rounded),
-          iconSize: 36,
-          tooltip: '上一章',
-          onPressed: player.previousChapter,
+        GlassSurface(
+          borderRadius: 24,
+          child: IconButton(
+            icon: const Icon(Icons.skip_previous_rounded),
+            iconSize: 32,
+            color: scheme.primary,
+            tooltip: '上一章',
+            onPressed: player.previousChapter,
+          ),
         ),
         const SizedBox(width: 24),
         FloatingActionButton.large(
@@ -270,38 +323,48 @@ class PlayerPage extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 24),
-        IconButton(
-          icon: const Icon(Icons.skip_next_rounded),
-          iconSize: 36,
-          tooltip: '下一章',
-          onPressed: player.nextChapter,
+        GlassSurface(
+          borderRadius: 24,
+          child: IconButton(
+            icon: const Icon(Icons.skip_next_rounded),
+            iconSize: 32,
+            color: scheme.primary,
+            tooltip: '下一章',
+            onPressed: player.nextChapter,
+          ),
         ),
       ],
     );
   }
 
   Widget _buildExtraControls(BuildContext context, AudioPlayerService player) {
+    final scheme = Theme.of(context).colorScheme;
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
         // Speed control
-        TextButton.icon(
-          icon: const Icon(Icons.speed_rounded),
-          label: Text('${player.speed.toStringAsFixed(1)}x'),
-          onPressed: () => _showSpeedDialog(context, player),
+        GlassSurface(
+          borderRadius: 20,
+          child: TextButton.icon(
+            style: TextButton.styleFrom(foregroundColor: scheme.primary),
+            icon: const Icon(Icons.speed_rounded),
+            label: Text('${player.speed.toStringAsFixed(1)}x'),
+            onPressed: () => _showSpeedDialog(context, player),
+          ),
         ),
         // Sleep timer
-        TextButton.icon(
-          icon: Icon(
-            player.hasSleepTimer ? Icons.timer_rounded : Icons.timer_outlined,
-            color: player.hasSleepTimer
-                ? Theme.of(context).colorScheme.primary
-                : null,
+        GlassSurface(
+          borderRadius: 20,
+          child: TextButton.icon(
+            style: TextButton.styleFrom(foregroundColor: scheme.primary),
+            icon: Icon(
+              player.hasSleepTimer ? Icons.timer_rounded : Icons.timer_outlined,
+            ),
+            label: Text(player.hasSleepTimer
+                ? _formatDuration(player.sleepRemaining ?? Duration.zero)
+                : '定时'),
+            onPressed: () => _showSleepTimerDialog(context, player),
           ),
-          label: Text(player.hasSleepTimer
-              ? _formatDuration(player.sleepRemaining ?? Duration.zero)
-              : '定时'),
-          onPressed: () => _showSleepTimerDialog(context, player),
         ),
       ],
     );
@@ -309,10 +372,8 @@ class PlayerPage extends StatelessWidget {
 
   void _showSpeedDialog(BuildContext context, AudioPlayerService player) {
     final speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
-    showModalBottomSheet(
+    showFrostedBottomSheet(
       context: context,
-      // 可滚动 + 限制高度：选项多时不再溢出（黄黑条纹）
-      isScrollControlled: true,
       builder: (ctx) => DraggableScrollableSheet(
         initialChildSize: 0.5,
         maxChildSize: 0.8,
@@ -357,9 +418,8 @@ class PlayerPage extends StatelessWidget {
       const Duration(minutes: 60),
       const Duration(minutes: 90),
     ];
-    showModalBottomSheet(
+    showFrostedBottomSheet(
       context: context,
-      isScrollControlled: true,
       builder: (ctx) => DraggableScrollableSheet(
         initialChildSize: 0.5,
         maxChildSize: 0.8,
@@ -425,10 +485,8 @@ class PlayerPage extends StatelessWidget {
     var intro = player.skipIntroSeconds;
     var outro = player.skipOutroSeconds;
 
-    await showModalBottomSheet<void>(
+    await showFrostedBottomSheet<void>(
       context: context,
-      // 键盘弹出时把面板顶上去，不遮挡输入框
-      isScrollControlled: true,
       builder: (ctx) => Padding(
         padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
         child: SafeArea(
@@ -501,42 +559,61 @@ class PlayerPage extends StatelessWidget {
 
   void _showCustomTimerDialog(BuildContext context, AudioPlayerService player) {
     final controller = TextEditingController(text: '30');
-    showDialog(
+    showFrostedBottomSheet(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('自定义定时（分钟）'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(hintText: '输入分钟数，如 45'),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+              child: Text('自定义定时（分钟）',
+                  style: Theme.of(ctx).textTheme.titleMedium),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: TextField(
+                controller: controller,
+                autofocus: true,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(hintText: '输入分钟数，如 45'),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('取消'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: () {
+                    final minutes = int.tryParse(controller.text.trim());
+                    if (minutes != null && minutes > 0) {
+                      player.setSleepTimer(Duration(minutes: minutes));
+                      Navigator.pop(ctx);
+                    }
+                  },
+                  child: const Text('确定'),
+                ),
+                const SizedBox(width: 24),
+              ],
+            ),
+            const SizedBox(height: 8),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final minutes = int.tryParse(controller.text.trim());
-              if (minutes != null && minutes > 0) {
-                player.setSleepTimer(Duration(minutes: minutes));
-                Navigator.pop(ctx);
-              }
-            },
-            child: const Text('确定'),
-          ),
-        ],
       ),
-    ).then((_) => controller.dispose());
+    ).whenComplete(() => controller.dispose());
   }
 
   void _showChapters(BuildContext context) {
     final player = context.read<AudioPlayerService>();
     final book = player.currentBook!;
-    showModalBottomSheet(
+    showFrostedBottomSheet(
       context: context,
-      isScrollControlled: true,
       builder: (ctx) => _ChapterSheet(book: book, player: player),
     );
   }

@@ -257,6 +257,8 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
               onTap: () => _playChapter(context, chapterIndex),
             );
           },
+          // 添加缓存扩展以提高滚动性能
+          cacheExtent: 1000,
         ),
         // 聚合浮动小圆钮：点击展开竖排菜单（回顶/定位/排序），可拖动并记忆位置
         _ChapterFab(

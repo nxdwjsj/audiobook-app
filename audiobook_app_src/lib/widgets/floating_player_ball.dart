@@ -9,6 +9,7 @@ import '../pages/player_page.dart';
 import '../repositories/bookshelf_repository.dart';
 import '../services/audio_player_service.dart';
 import '../services/storage_service.dart';
+import 'frosted_glass.dart';
 import 'throttled_navigator.dart';
 
 /// 全局悬浮播放球：
@@ -50,6 +51,9 @@ class _FloatingPlayerBallState extends State<FloatingPlayerBall>
   /// 收起且播放中 → 球内声波条动画（build 里按需 repeat/stop，不常驻空转）
   late final AnimationController _wave = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 1200));
+  
+  /// 动画构建器，避免不必要的重建
+  late final Animation<double> _waveAnimation = CurvedAnimation(parent: _wave, curve: Curves.easeInOut);
 
   bool _initialized = false;
   Size _lastSize = Size.zero;
@@ -196,7 +200,7 @@ class _FloatingPlayerBallState extends State<FloatingPlayerBall>
     return null;
   }
 
-  /// 收起状态的悬浮球（可拖到任意位置）
+  /// 收起状态的悬浮球（可拖到任意位置）：雾白毛玻璃质感
   Widget _buildBall(BuildContext context, AudioPlayerService player) {
     final scheme = Theme.of(context).colorScheme;
     final cover = _coverWidget(player.currentBook,
@@ -221,37 +225,25 @@ class _FloatingPlayerBallState extends State<FloatingPlayerBall>
           _dragging = false;
         },
         onTap: () => setState(() => _expanded = true),
-        child: Container(
-          width: ballSize,
-          height: ballSize,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [scheme.primary, scheme.tertiary],
+        child: FrostedGlassContainer(
+          borderRadius: ballSize / 2, // 圆形
+          child: SizedBox(
+            width: ballSize,
+            height: ballSize,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                if (cover != null) ClipOval(child: cover),
+                if (player.isPlaying)
+                  _waveOverlay(scheme, overCover: cover != null)
+                else
+                  Icon(
+                    Icons.play_arrow_rounded,
+                    color: scheme.onPrimary.withValues(alpha: 0.95),
+                    size: 28,
+                  ),
+              ],
             ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.35),
-                blurRadius: 10,
-                offset: const Offset(0, 3),
-              ),
-            ],
-          ),
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              if (cover != null) ClipOval(child: cover),
-              if (player.isPlaying)
-                _waveOverlay(scheme, overCover: cover != null)
-              else
-                Icon(
-                  Icons.play_arrow_rounded,
-                  color: scheme.onPrimary.withValues(alpha: 0.95),
-                  size: 28,
-                ),
-            ],
           ),
         ),
       ),
@@ -271,9 +263,9 @@ class _FloatingPlayerBallState extends State<FloatingPlayerBall>
         color: overCover ? Colors.black.withValues(alpha: 0.45) : null,
       ),
       child: AnimatedBuilder(
-        animation: _wave,
+        animation: _waveAnimation,
         builder: (context, _) {
-          final t = _wave.value * 2 * math.pi;
+          final t = _waveAnimation.value * 2 * math.pi;
           return Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -335,111 +327,107 @@ class _FloatingPlayerBallState extends State<FloatingPlayerBall>
               );
             },
             child: Material(
-            elevation: 6,
-            borderRadius: BorderRadius.circular(16),
-            color: scheme.surface.withValues(alpha: 0.97),
-            child: Container(
-              width: barWidth,
-              height: barHeight,
-              padding: const EdgeInsets.fromLTRB(8, 8, 4, 8),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                    color: scheme.outlineVariant.withValues(alpha: 0.5)),
-              ),
-              child: Row(
-                children: [
-                  // ---- 左半：图书信息（点击进播放页）----
-                  Expanded(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () {
-                        setState(() => _expanded = false);
-                        context.pushPlayerPage();
-                      },
-                      child: Row(
-                        children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: SizedBox(
-                              width: 44,
-                              height: 44,
-                              child: _coverWidget(book,
-                                      width: 44,
-                                      height: 44,
-                                      decodeWidth: 88) ??
-                                  Container(
-                                    color:
-                                        scheme.primaryContainer.withValues(alpha: 0.6),
-                                    child: Icon(Icons.auto_stories_rounded,
-                                        color: scheme.primary),
+            color: Colors.transparent,
+            child: FrostedGlassContainer(
+              borderRadius: 16,
+              child: Container(
+                width: barWidth,
+                height: barHeight,
+                padding: const EdgeInsets.fromLTRB(8, 8, 4, 8),
+                child: Row(
+                  children: [
+                    // ---- 左半：图书信息（点击进播放页）----
+                    Expanded(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () {
+                          setState(() => _expanded = false);
+                          context.pushPlayerPage();
+                        },
+                        child: Row(
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: SizedBox(
+                                width: 44,
+                                height: 44,
+                                child: _coverWidget(book,
+                                        width: 44,
+                                        height: 44,
+                                        decodeWidth: 88) ??
+                                    Container(
+                                      color:
+                                          scheme.primaryContainer.withValues(alpha: 0.6),
+                                      child: Icon(Icons.auto_stories_rounded,
+                                          color: scheme.primary),
+                                    ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    book.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleSmall
+                                        ?.copyWith(fontWeight: FontWeight.w600),
                                   ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    chapter != null
+                                        ? '${player.currentChapterIndex + 1}. ${chapter.title}'
+                                        : '第 ${player.currentChapterIndex + 1} 集',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall
+                                        ?.copyWith(color: scheme.onSurfaceVariant),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  book.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .titleSmall
-                                      ?.copyWith(fontWeight: FontWeight.w600),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  chapter != null
-                                      ? '${player.currentChapterIndex + 1}. ${chapter.title}'
-                                      : '第 ${player.currentChapterIndex + 1} 集',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .bodySmall
-                                      ?.copyWith(color: scheme.onSurfaceVariant),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 4),
-                  // ---- 右半：功能键 ----
-                  _barButton(
-                    context,
-                    icon: Icons.skip_previous_rounded,
-                    tooltip: '上一章',
-                    onTap: () => player.previousChapter(),
-                  ),
-                  _barButton(
-                    context,
-                    icon: player.isPlaying
-                        ? Icons.pause_rounded
-                        : Icons.play_arrow_rounded,
-                    tooltip: '播放/暂停',
-                    accent: true,
-                    onTap: () => player.playPause(),
-                  ),
-                  _barButton(
-                    context,
-                    icon: Icons.skip_next_rounded,
-                    tooltip: '下一章',
-                    onTap: () => player.nextChapter(),
-                  ),
-                  _barButton(
-                    context,
-                    icon: Icons.close_rounded,
-                    tooltip: '收起',
-                    onTap: () => setState(() => _expanded = false),
-                  ),
-                ],
+                    const SizedBox(width: 4),
+                    // ---- 右半：功能键 ----
+                    _barButton(
+                      context,
+                      icon: Icons.skip_previous_rounded,
+                      tooltip: '上一章',
+                      onTap: () => player.previousChapter(),
+                    ),
+                    _barButton(
+                      context,
+                      icon: player.isPlaying
+                          ? Icons.pause_rounded
+                          : Icons.play_arrow_rounded,
+                      tooltip: '播放/暂停',
+                      accent: true,
+                      onTap: () => player.playPause(),
+                    ),
+                    _barButton(
+                      context,
+                      icon: Icons.skip_next_rounded,
+                      tooltip: '下一章',
+                      onTap: () => player.nextChapter(),
+                    ),
+                    _barButton(
+                      context,
+                      icon: Icons.close_rounded,
+                      tooltip: '收起',
+                      onTap: () => setState(() => _expanded = false),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),

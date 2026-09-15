@@ -1,8 +1,9 @@
 import 'dart:async';
+import 'dart:io' show InternetAddress;
+import 'package:audio_service/audio_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleListener;
 import 'package:just_audio/just_audio.dart';
-import 'package:just_audio_background/just_audio_background.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../models/book.dart';
 import '../models/chapter.dart';
@@ -21,10 +22,25 @@ typedef StreamUrlResolverWithHeaders =
     Future<ResolvedStream?> Function(Chapter chapter);
 
 /// Manages audio playback state and controls.
-/// Uses just_audio for playback and Provider for state notification.
+/// Uses just_audio for playback and audio_service for MediaSession / notification.
+/// 不直接继承 AudioHandler（Provider 要求 ChangeNotifier，而 BaseAudioHandler
+/// 不是 ChangeNotifier），改为内部持有一个 AudioHandler 实例来推送状态。
 class AudioPlayerService extends ChangeNotifier {
   final AudioPlayer _player = AudioPlayer();
   final ProgressRepository _progressRepo;
+
+  /// 推送给 MediaSession 的 handler（由 AudioService.init 注入）
+  AppAudioHandler? _handler;
+
+  /// 绑定 MediaSession handler（由 main.dart 在 AudioService.init 后调用）
+  void bindMediaSessionHandler(AppAudioHandler handler) {
+    _handler = handler;
+    // 通知栏按钮点击 → 回调到播放控制
+    handler.onPlay = playPause;
+    handler.onPause = playPause;
+    handler.onSkipToNext = nextChapter;
+    handler.onSkipToPrevious = previousChapter;
+  }
 
   /// 收听会话（历史记录数据源）：手动点播新建，自动连播只更新。
   ListenSessionRepository? sessionRepo;
@@ -39,6 +55,12 @@ class AudioPlayerService extends ChangeNotifier {
   /// 切章进行中。切章是异步的，期间位置事件仍停留在旧章节末尾，
   /// 没有这层锁会连锁触发 nextChapter()，瞬间跳掉好几章并造成卡顿。
   bool _switchingChapter = false;
+
+  /// 最后一次成功加载的章节索引（-1 = 未加载）。
+  /// 「播放完成」与「片尾跳过」只对该索引生效：加载失败时没有新 source 载入，
+  /// 播放器会一直停留在上一章的 completed / 片尾位置，此后每个 playbackEvent
+  /// 都会再次命中自动连播分支 —— 网络波动时会连锁跳过好几章。
+  int _loadedIndex = -1;
 
   /// 跳过片头秒数（0 = 不跳过）。按当前书查询，避免缓存与设置不同步。
   int get _skipIntroSeconds {
@@ -59,6 +81,9 @@ class AudioPlayerService extends ChangeNotifier {
 
   /// 上次已对外通知的播放位置（整秒），用于给位置更新做节流。
   int _notifiedPositionSecond = -1;
+
+  /// 上次已对外通知的播放位置（毫秒），用于更精细的节流控制。
+  int _notifiedPositionMillisecond = -1;
 
   /// 尚未满 1 秒记账阈值的零头时长。
   Duration _pendingListen = Duration.zero;
@@ -86,8 +111,15 @@ class AudioPlayerService extends ChangeNotifier {
   /// Error message from the last failed load, for UI display.
   String? lastError;
 
-  /// 自动连播失败重试：后台切章失败（CDN 直链过期 / 系统限制后台网络）时
-  /// 静默退避重试，避免整本书在后台断播。
+  /// 正在自动重试（界面提示用）。
+  bool retrying = false;
+
+  /// 自动连播失败重试：后台切章时可能遇到 DNS 解析失败、直链失效、
+  /// 系统限制后台网络等，界面上没有重试入口，这里静默退避重试。
+  /// 间隔前密后疏：校园网/移动网络下 DNS 常整段失效（实测中断 30 余秒），
+  /// 前几次必须密，才能在网络恢复的瞬间立刻接上，而不是等完整退避周期。
+  /// 合计约 3.5 分钟，覆盖得住常见的中断时长。
+  static const _retryDelays = [3, 5, 8, 12, 18, 25, 35, 50, 60];
   int _advanceRetries = 0;
   Timer? _advanceRetryTimer;
 
@@ -108,11 +140,26 @@ class AudioPlayerService extends ChangeNotifier {
       // 播放页 / 迷你栏都用 context.watch 订阅本服务，若每次位置更新都通知，
       // 会导致整页（含封面图）高频重建，表现为播放页卡顿。
       // 进度显示精度只到秒，因此仅在整秒变化时通知。
-      if (pos.inSeconds == _notifiedPositionSecond) return;
-      _notifiedPositionSecond = pos.inSeconds;
+      // 但在播放页打开时，为了滑块拖动的平滑性，允许更频繁的通知
+      final shouldNotify = PlayerPage.isShown 
+          ? pos.inMilliseconds != _notifiedPositionMillisecond
+          : pos.inSeconds != _notifiedPositionSecond;
+          
+      if (!shouldNotify) return;
+      
+      if (PlayerPage.isShown) {
+        _notifiedPositionMillisecond = pos.inMilliseconds;
+      } else {
+        _notifiedPositionSecond = pos.inSeconds;
+      }
       notifyListeners();
     });
     _player.durationStream.listen((_) => notifyListeners());
+    // 通知栏 / 锁屏播放控制：播放状态变化时手动推送给 MediaSession。
+    // 不再依赖 just_audio_background（Android 16 上 MediaSession 状态不更新），
+    // 由本服务直接调用 audio_service 的 playbackState / mediaItem。
+    _player.playbackEventStream.listen((_) => _pushMediaSessionState());
+    _player.playerStateStream.listen((_) => _pushMediaSessionState());
     // 后台连播失败补试：回到前台时若仍处于失败状态，自动重试当前章节
     _lifecycleListener = AppLifecycleListener(
       onResume: () {
@@ -175,6 +222,8 @@ class AudioPlayerService extends ChangeNotifier {
     // 旧的重试任务不再适用（可能指向旧书的章节）
     _advanceRetryTimer?.cancel();
     _advanceRetries = 0;
+    retrying = false;
+    _loadedIndex = -1;
     // 空章节的书不切换当前书（避免 hasBook=true 但章节为空的半初始化状态，
     // 那会导致目录面板 clamp(0, -1) 崩溃）
     if (book.chapters.isEmpty) {
@@ -202,8 +251,7 @@ class AudioPlayerService extends ChangeNotifier {
     if (lastError != null) {
       _scheduleAdvanceRetry();
     } else {
-      await _seekToStart(Duration.zero);
-      await _player.play();
+      await _resumeAfterLoad();
     }
     notifyListeners();
   }
@@ -252,6 +300,9 @@ class AudioPlayerService extends ChangeNotifier {
     }
     // 正在切章 / 本章已跳过：直接忽略，否则会连锁触发 nextChapter()
     if (_switchingChapter) return;
+    // 当前章节还没加载成功（网络失败重试中）：播放器位置仍停在上一章的片尾，
+    // 据此判定「到片尾了」同样会连锁跳章
+    if (_loadedIndex != _currentChapterIndex) return;
     _switchingChapter = true;
 
     if (_currentChapterIndex < _chapters.length - 1) {
@@ -300,14 +351,127 @@ class AudioPlayerService extends ChangeNotifier {
       title: chapter.title,
       album: (bookTitle != null && bookTitle.isNotEmpty) ? bookTitle : '聆云',
       artist: (author != null && author.isNotEmpty) ? author : '聆云',
-      artUri: (cover != null && cover.isNotEmpty) ? Uri.tryParse(cover) : null,
+      artUri: _artUriFor(cover),
     );
+  }
+
+  /// 通知栏封面 URI：本地文件绝对路径必须转成 file:// URI。
+  /// 直接交给 artUri 的话 just_audio 会当成 HTTP 请求去拉，
+  /// 报「No host specified in URI」——通知栏封面永远加载不出来。
+  Uri? _artUriFor(String? cover) {
+    if (cover == null || cover.isEmpty) return null;
+    final parsed = Uri.tryParse(cover);
+    if (parsed != null && parsed.hasScheme) return parsed;
+    return Uri.file(cover);
+  }
+
+  /// 把 just_audio 的播放状态映射到 audio_service 的 PlaybackState，
+  /// 推送给 MediaSession → 通知栏 / 锁屏播放控制卡片。
+  /// 手动推送而非依赖 just_audio_background：
+  /// just_audio_background 在 Android 16 上 MediaSession 状态永远不更新。
+  void _pushMediaSessionState() {
+    final handler = _handler;
+    final chapter = currentChapter;
+    if (handler == null || chapter == null) return;
+    final playing = _player.playing;
+    final processing = _player.processingState;
+    final pos = _player.position;
+
+    // 映射 just_audio 的 ProcessingState → audio_service 的 AudioProcessingState
+    AudioProcessingState audioState;
+    switch (processing) {
+      case ProcessingState.idle:
+        audioState = AudioProcessingState.idle;
+        break;
+      case ProcessingState.loading:
+        audioState = AudioProcessingState.loading;
+        break;
+      case ProcessingState.buffering:
+        audioState = AudioProcessingState.buffering;
+        break;
+      case ProcessingState.ready:
+        audioState = AudioProcessingState.ready;
+        break;
+      case ProcessingState.completed:
+        audioState = AudioProcessingState.completed;
+        break;
+    }
+
+    handler.pushPlaybackState(handler.playbackState.value.copyWith(
+      controls: [
+        MediaControl.skipToPrevious,
+        playing ? MediaControl.pause : MediaControl.play,
+        MediaControl.skipToNext,
+      ],
+      systemActions: const {
+        MediaAction.seek,
+        MediaAction.seekForward,
+        MediaAction.seekBackward,
+      },
+      androidCompactActionIndices: const [0, 1, 2],
+      processingState: audioState,
+      playing: playing,
+      updatePosition: pos,
+      bufferedPosition: _player.bufferedPosition,
+      speed: _player.speed,
+      queueIndex: _currentChapterIndex,
+    ));
+    // 通知栏时长显示：单独推送 duration（PlaybackState 里没有 duration 字段，
+    // 需要通过 mediaItem 的 duration 或者系统自己从音频源取）
+    final dur = _player.duration;
+    if (dur != null) {
+      handler.pushDuration(dur);
+    }
+  }
+
+  /// 直链主机能不能解析出 IP。
+  /// 校园网 / 移动网络下 CDN 域名会间歇性解析失败（errno 7），此时若直接交给
+  /// just_audio，它内部要按 8 秒间隔重试，实测每次卡 ~20 秒才成功，
+  /// 界面全程无反馈像卡死。这里主动探测，1~4 秒即可判定。
+  /// 已是 IP 或解析不出主机名的 URL 视为可用（交给播放器自己处理）。
+  Future<bool> _hostReachable(String url) async {
+    final host = Uri.tryParse(url)?.host ?? '';
+    if (host.isEmpty) return true;
+    if (RegExp(r'^\d{1,3}(\.\d{1,3}){3}$').hasMatch(host)) return true;
+    try {
+      final addrs = await InternetAddress.lookup(host)
+          .timeout(const Duration(seconds: 4));
+      return addrs.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 确保直链主机可解析：不通就重新走一遍解析接口换条直链（服务端可能返回
+  /// 其他区域节点）再试，最多 3 轮。全部失败返回 null。
+  Future<ResolvedStream?> _ensureReachable(
+      Chapter chapter, ResolvedStream resolved) async {
+    var candidate = resolved;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      if (await _hostReachable(candidate.url)) return candidate;
+      final host = Uri.tryParse(candidate.url)?.host;
+      debugPrint('[Player] 直链主机解析失败，重新解析直链 '
+          '(第 ${attempt + 1}/3 次): $host');
+      if (attempt == 2) break;
+      // 丢弃这条直链，避免重新解析又拿到同一条
+      final fileId = chapter.fileId;
+      if (fileId != null) _resolvedCache.remove(fileId);
+      final resolver = streamUrlResolver;
+      if (resolver == null) break;
+      final retry = await resolver(chapter);
+      if (retry == null) break;
+      candidate = retry;
+    }
+    return null;
   }
 
   Future<void> _loadCurrentChapter() async {
     if (_currentBook == null || _chapters.isEmpty) return;
 
     final chapter = _chapters[_currentChapterIndex];
+    // 本次加载的目标章节快照：重试定时器与用户手动切章可能叠在一起并发执行，
+    // 旧请求返回时不能覆盖新章节的就位状态（否则自动连播会失效）
+    final targetIndex = _currentChapterIndex;
     lastError = null;
     // 注意：这里不要清 _switchingChapter。切章期间位置事件仍停在旧章节末尾，
     // 提前清掉会连锁触发再次跳章；该锁在落到新章节后由 _maybeSkipOutro 解除。
@@ -356,14 +520,30 @@ class AudioPlayerService extends ChangeNotifier {
           }
           resolved = result;
         }
-        debugPrint('[Player] 解析到流地址: ${resolved.url.substring(0, resolved.url.length.clamp(0, 120))}...');
-        loadedDuration = await _player.setAudioSource(
-          AudioSource.uri(
-            Uri.parse(resolved.url),
-            headers: resolved.headers,
-            tag: _mediaItemFor(chapter),
-          ),
-        );
+        // DNS 预检：域名解析不了就别交给播放器干等 20 秒，
+        // 立刻重新解析直链换条地址再试（实测能把 20 秒压到几秒）
+        final reachable = await _ensureReachable(chapter, resolved);
+        if (reachable == null) {
+          lastError = '网络不稳定，暂时连不上音频服务器';
+          debugPrint('[Player] $lastError');
+          notifyListeners();
+          return;
+        }
+        debugPrint('[Player] 解析到流地址: ${reachable.url.substring(0, reachable.url.length.clamp(0, 120))}...');
+        loadedDuration = await _player
+            .setAudioSource(
+              AudioSource.uri(
+                Uri.parse(reachable.url),
+                headers: reachable.headers,
+              ),
+            )
+            // 兜底超时：极端网络下 setAudioSource 可能长时间不返回
+            .timeout(const Duration(seconds: 15));
+      } on TimeoutException {
+        lastError = '连接音频服务器超时';
+        debugPrint('[Player] $lastError');
+        notifyListeners();
+        return;
       } catch (e) {
         lastError = '获取播放链接失败: $e';
         debugPrint('[Player] $lastError');
@@ -374,10 +554,7 @@ class AudioPlayerService extends ChangeNotifier {
       // Local imported books store the file path in chapter.filename
       try {
         loadedDuration = await _player.setAudioSource(
-          AudioSource.uri(
-            Uri.parse(chapter.filename),
-            tag: _mediaItemFor(chapter),
-          ),
+          AudioSource.uri(Uri.parse(chapter.filename)),
         );
       } catch (e) {
         lastError = '加载音频失败: $e';
@@ -400,10 +577,31 @@ class AudioPlayerService extends ChangeNotifier {
       lastError = '播放器未能加载音频（可能是格式不支持或链接失效）';
       debugPrint('[Player] $lastError');
     }
+    // 只有真正加载成功才认这一章已就位，供自动连播 / 片尾跳过做判定
+    if (lastError == null && _currentChapterIndex == targetIndex) {
+      _loadedIndex = targetIndex;
+      // 通知栏 / 锁屏显示当前章节信息
+      _handler?.pushMediaItem(_mediaItemFor(chapter));
+    }
     notifyListeners();
+    _pushMediaSessionState();
   }
 
   Future<void> playPause() async {
+    // 处于加载失败状态时，播放键即「手动重试」：
+    // 否则用户点它没有任何反应（播放器还在 idle），只能干等自动重试
+    if (lastError != null && !_player.playing) {
+      _advanceRetryTimer?.cancel();
+      _advanceRetries = 0;
+      _resolvedCache.clear();
+      _preloadedForFileId = null;
+      await _loadCurrentChapter();
+      if (lastError == null) {
+        await _resumeAfterLoad();
+      }
+      notifyListeners();
+      return;
+    }
     if (_player.playing) {
       await _player.pause();
     } else {
@@ -427,11 +625,9 @@ class AudioPlayerService extends ChangeNotifier {
       _currentChapterIndex++;
       await _loadCurrentChapter();
       if (lastError != null) {
-        // 后台连播失败最常见：CDN 直链过期 / 系统限制后台网络 → 静默退避重试
         _scheduleAdvanceRetry();
       } else {
-        await _seekToStart(Duration.zero);
-        await _player.play();
+        await _resumeAfterLoad();
       }
       notifyListeners();
     }
@@ -447,8 +643,7 @@ class AudioPlayerService extends ChangeNotifier {
       if (lastError != null) {
         _scheduleAdvanceRetry();
       } else {
-        await _seekToStart(Duration.zero);
-        await _player.play();
+        await _resumeAfterLoad();
       }
       notifyListeners();
     }
@@ -483,7 +678,11 @@ class AudioPlayerService extends ChangeNotifier {
   void _onPlaybackEvent(PlaybackEvent event) {
     // Auto-advance to next chapter when current ends
     if (event.processingState == ProcessingState.completed) {
-      if (_currentChapterIndex < _chapters.length - 1) {
+      // 只对「已成功加载的当前章节」响应：加载失败时没有新 source 载入，
+      // player 会一直停在 completed，后续每个事件都会再跳一章
+      // （实测出现过 2 毫秒内连跳两章）
+      if (_loadedIndex == _currentChapterIndex &&
+          _currentChapterIndex < _chapters.length - 1) {
         nextChapter();
       }
     }
@@ -552,32 +751,53 @@ class AudioPlayerService extends ChangeNotifier {
     );
   }
 
-  /// 自动连播失败重试：后台切章时 CDN 直链可能已过期、或系统限制后台网络，
-  /// 界面上没有重试入口，这里按退避间隔（3/6/9 秒）静默重试最多 3 次。
+  /// 加载成功后接上播放，并清掉自动重试状态。
+  /// 必须重置 retrying：否则用户手动切章成功后，播放页会一直挂着
+  /// 「正在自动重试…」的假提示。
+  Future<void> _resumeAfterLoad() async {
+    _advanceRetryTimer?.cancel();
+    _advanceRetries = 0;
+    retrying = false;
+    await _seekToStart(Duration.zero);
+    await _player.play();
+  }
+
+  /// 自动连播失败重试：后台切章时可能遇到 CDN 域名解析失败、直链失效、
+  /// 系统限制后台网络等，界面上没有重试入口，这里静默退避重试。
+  /// 间隔前密后疏（3~60 秒，合计约 3.5 分钟），网络恢复的瞬间即可接上；
   /// 每次重试前清空预加载缓存，强制重新解析新直链。
   void _scheduleAdvanceRetry() {
     if (_currentBook == null || _currentChapterIndex >= _chapters.length) {
       return;
     }
-    if (_advanceRetries >= 3) return;
+    if (_advanceRetries >= _retryDelays.length) {
+      retrying = false;
+      notifyListeners();
+      return;
+    }
+    final delay = Duration(seconds: _retryDelays[_advanceRetries]);
     _advanceRetries++;
+    retrying = true;
     _advanceRetryTimer?.cancel();
-    _advanceRetryTimer = Timer(Duration(seconds: 3 * _advanceRetries), () async {
-      // 期间用户已手动恢复（换书/成功播放）→ 放弃本次重试
-      if (_currentBook == null || lastError == null) return;
+    _advanceRetryTimer = Timer(delay, () async {
+      // 期间用户已手动恢复（换书 / 已接上播放）→ 放弃本次重试
+      if (_currentBook == null || lastError == null) {
+        retrying = false;
+        notifyListeners();
+        return;
+      }
       // 旧直链（含预加载缓存）大概率已失效，丢弃重新解析
       _resolvedCache.clear();
       _preloadedForFileId = null;
       await _loadCurrentChapter();
       if (lastError == null) {
-        _advanceRetries = 0;
-        await _seekToStart(Duration.zero);
-        await _player.play();
+        await _resumeAfterLoad();
       } else {
         _scheduleAdvanceRetry();
       }
       notifyListeners();
     });
+    notifyListeners();
   }
 
   /// 直链 URL 的剩余有效秒数（解析查询参数里的 Expires / x-oss-expires）。
@@ -654,6 +874,8 @@ class AudioPlayerService extends ChangeNotifier {
   Future<void> stop() async {
     await _saveProgress();
     _advanceRetryTimer?.cancel();
+    retrying = false;
+    _loadedIndex = -1;
     await _player.stop();
     _currentBook = null;
     _chapters = [];
@@ -669,5 +891,44 @@ class AudioPlayerService extends ChangeNotifier {
     _player.dispose();
     super.dispose();
   }
+}
+
+/// 推送给 MediaSession 的 AudioHandler 实现。
+/// 接收 AudioPlayerService 手动推送的播放状态与 MediaItem，
+/// 同时把通知栏按钮点击事件回调给 AudioPlayerService。
+class AppAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
+  /// 通知栏按钮点击回调（由 AudioPlayerService 注入）
+  void Function()? onPlay;
+  void Function()? onPause;
+  void Function()? onSkipToNext;
+  void Function()? onSkipToPrevious;
+
+  void pushPlaybackState(PlaybackState state) {
+    playbackState.add(state);
+  }
+
+  void pushMediaItem(MediaItem item) {
+    mediaItem.add(item);
+  }
+
+  /// 推送时长给通知栏（通过更新当前 mediaItem 的 duration）
+  void pushDuration(Duration duration) {
+    final item = mediaItem.value;
+    if (item != null) {
+      mediaItem.add(item.copyWith(duration: duration));
+    }
+  }
+
+  @override
+  Future<void> play() async => onPlay?.call();
+
+  @override
+  Future<void> pause() async => onPause?.call();
+
+  @override
+  Future<void> skipToNext() async => onSkipToNext?.call();
+
+  @override
+  Future<void> skipToPrevious() async => onSkipToPrevious?.call();
 }
 

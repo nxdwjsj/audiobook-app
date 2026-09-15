@@ -9,6 +9,7 @@ import '../services/audio_player_service.dart';
 import '../services/cloud_drive_service.dart';
 import '../repositories/bookshelf_repository.dart';
 import '../models/bookshelf_book.dart';
+import '../widgets/frosted_glass.dart';
 import '../widgets/throttled_navigator.dart';
 import 'drive_login_page.dart';
 
@@ -168,30 +169,27 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
   }
 
   Future<void> _showFolderActions(DriveItem item) async {
-    final action = await showModalBottomSheet<String>(
+    final action = await showFrostedBottomSheet<String>(
       context: context,
-      showDragHandle: true,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.folder_open_rounded),
-              title: const Text('打开文件夹'),
-              onTap: () => Navigator.pop(ctx, 'open'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.play_circle_fill_rounded),
-              title: const Text('播放此文件夹全部音频'),
-              onTap: () => Navigator.pop(ctx, 'play'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.add_rounded),
-              title: const Text('加入书架'),
-              onTap: () => Navigator.pop(ctx, 'shelf'),
-            ),
-          ],
-        ),
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            leading: const Icon(Icons.folder_open_rounded),
+            title: const Text('打开文件夹'),
+            onTap: () => Navigator.pop(ctx, 'open'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.play_circle_fill_rounded),
+            title: const Text('播放此文件夹全部音频'),
+            onTap: () => Navigator.pop(ctx, 'play'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.add_rounded),
+            title: const Text('加入书架'),
+            onTap: () => Navigator.pop(ctx, 'shelf'),
+          ),
+        ],
       ),
     );
     if (action == null || !mounted) return;

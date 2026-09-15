@@ -12,6 +12,7 @@ import '../repositories/progress_repository.dart';
 import '../services/audio_player_service.dart';
 import '../services/local_import_service.dart';
 import '../services/storage_service.dart';
+import '../widgets/frosted_glass.dart';
 import '../widgets/throttled_navigator.dart';
 import 'drive_browser_page.dart';
 import 'resource_search_page.dart';
@@ -39,33 +40,30 @@ class _BookshelfPageState extends State<BookshelfPage> {
 
   /// 切换书架布局（记住选择）。
   Future<void> _pickLayout() async {
-    final picked = await showModalBottomSheet<int>(
+    final picked = await showFrostedBottomSheet<int>(
       context: context,
-      showDragHandle: true,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Text('书架布局',
-                  style: Theme.of(ctx).textTheme.titleSmall),
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Text('书架布局',
+                style: Theme.of(ctx).textTheme.titleSmall),
+          ),
+          for (final (value, label, icon) in const [
+            (3, '3 列（默认）', Icons.grid_view_rounded),
+            (2, '2 列', Icons.grid_view_rounded),
+            (4, '4 列', Icons.grid_view_rounded),
+            (0, '列表视图', Icons.view_list_rounded),
+          ])
+            ListTile(
+              leading: Icon(icon),
+              title: Text(label),
+              trailing:
+                  _columns == value ? const Icon(Icons.check_rounded) : null,
+              onTap: () => Navigator.pop(ctx, value),
             ),
-            for (final (value, label, icon) in const [
-              (3, '3 列（默认）', Icons.grid_view_rounded),
-              (2, '2 列', Icons.grid_view_rounded),
-              (4, '4 列', Icons.grid_view_rounded),
-              (0, '列表视图', Icons.view_list_rounded),
-            ])
-              ListTile(
-                leading: Icon(icon),
-                title: Text(label),
-                trailing:
-                    _columns == value ? const Icon(Icons.check_rounded) : null,
-                onTap: () => Navigator.pop(ctx, value),
-              ),
-          ],
-        ),
+        ],
       ),
     );
     if (picked == null || !mounted) return;
@@ -93,19 +91,10 @@ class _BookshelfPageState extends State<BookshelfPage> {
               ),
             )
           else
-            PopupMenuButton<String>(
+            IconButton(
               icon: const Icon(Icons.more_horiz_rounded),
               tooltip: '更多',
-              onSelected: (value) => _onMenuSelected(context, value),
-              itemBuilder: (ctx) => [
-                _menuTile('explore', Icons.travel_explore_rounded, '全网搜书'),
-                _menuTile('search', Icons.search_rounded, '搜索'),
-                _menuTile('drive', Icons.cloud_rounded, '打开网盘'),
-                _menuTile('local', Icons.download_rounded, '导入本地音频'),
-                _menuTile('layout', Icons.grid_view_rounded, '书架布局'),
-                if (books.length > 1)
-                  _menuTile('sort', Icons.swap_vert_rounded, '排序书架'),
-              ],
+              onPressed: () => _showMoreMenu(context, books.length),
             ),
         ],
       ),
@@ -156,7 +145,44 @@ class _BookshelfPageState extends State<BookshelfPage> {
                       itemBuilder: (context, index) {
                         return _BookshelfItem(book: books[index]);
                       },
+                      // 添加缓存扩展以提高滚动性能
+                      cacheExtent: 1000,
                     ),
+    );
+  }
+
+  /// 右上角「更多」菜单：雾白毛玻璃 BottomSheet。
+  Future<void> _showMoreMenu(BuildContext context, int bookCount) async {
+    final action = await showFrostedBottomSheet<String>(
+      context: context,
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _menuTile('explore', Icons.travel_explore_rounded, '全网搜书'),
+          _menuTile('search', Icons.search_rounded, '搜索'),
+          _menuTile('drive', Icons.cloud_rounded, '打开网盘'),
+          _menuTile('local', Icons.download_rounded, '导入本地音频'),
+          _menuTile('layout', Icons.grid_view_rounded, '书架布局'),
+          if (bookCount > 1)
+            _menuTile('sort', Icons.swap_vert_rounded, '排序书架'),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+    if (action == null || !mounted) return;
+    await _onMenuSelected(context, action);
+  }
+
+  /// 菜单项（BottomSheet 版）：图标 + 简洁文字，无分割线，靠留白区分。
+  Widget _menuTile(
+    String value,
+    IconData icon,
+    String title,
+  ) {
+    return ListTile(
+      leading: Icon(icon, size: 22),
+      title: Text(title, style: const TextStyle(fontSize: 15)),
+      onTap: () => Navigator.pop(context, value),
     );
   }
 
@@ -166,25 +192,6 @@ class _BookshelfPageState extends State<BookshelfPage> {
     final book = books.removeAt(oldIndex);
     books.insert(newIndex, book);
     context.read<BookshelfRepository>().reorder(books);
-  }
-
-  /// 顶部「更多」菜单项。保持单行紧凑，避免菜单占掉半屏。
-  PopupMenuItem<String> _menuTile(
-    String value,
-    IconData icon,
-    String title,
-  ) {
-    return PopupMenuItem(
-      value: value,
-      height: 46,
-      child: Row(
-        children: [
-          Icon(icon, size: 20),
-          const SizedBox(width: 12),
-          Text(title, style: const TextStyle(fontSize: 14.5)),
-        ],
-      ),
-    );
   }
 
   /// 「更多」菜单分发：搜书 / 搜索 / 排序 / 打开网盘 / 导入本地。
@@ -434,8 +441,7 @@ class _BookshelfItemState extends State<_BookshelfItem> {
 
     if (widget.compact) return _buildCompact(context, progressPercent, badge);
 
-    return Card(
-      clipBehavior: Clip.antiAlias,
+    return GlassSurface(
       child: InkWell(
         onTap: () => _openBook(context),
         onLongPress: () => _showItemActions(context),
@@ -526,41 +532,38 @@ class _BookshelfItemState extends State<_BookshelfItem> {
 
   /// 长按菜单：进入详情 / 移出书架。
   Future<void> _showItemActions(BuildContext context) async {
-    final action = await showModalBottomSheet<String>(
+    final action = await showFrostedBottomSheet<String>(
       context: context,
-      showDragHandle: true,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-              child: Text(
-                book.title,
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+            child: Text(
+              book.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(ctx).textTheme.titleSmall,
+            ),
+          ),
+          // 网盘书：进入对应文件夹
+          if (book.driveType != null && book.drivePath != null)
+            ListTile(
+              leading: const Icon(Icons.folder_open_rounded),
+              title: const Text('打开网盘文件夹'),
+              subtitle: Text(
+                book.drivePath!,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: Theme.of(ctx).textTheme.titleSmall,
               ),
+              onTap: () => Navigator.pop(ctx, 'open'),
             ),
-            // 网盘书：进入对应文件夹
-            if (book.driveType != null && book.drivePath != null)
-              ListTile(
-                leading: const Icon(Icons.folder_open_rounded),
-                title: const Text('打开网盘文件夹'),
-                subtitle: Text(
-                  book.drivePath!,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                onTap: () => Navigator.pop(ctx, 'open'),
-              ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline_rounded),
-              title: const Text('移出书架'),
-              onTap: () => Navigator.pop(ctx, 'remove'),
-            ),
-          ],
-        ),
+          ListTile(
+            leading: const Icon(Icons.delete_outline_rounded),
+            title: const Text('移出书架'),
+            onTap: () => Navigator.pop(ctx, 'remove'),
+          ),
+        ],
       ),
     );
     if (action == null || !context.mounted) return;
@@ -599,8 +602,7 @@ class _BookshelfItemState extends State<_BookshelfItem> {
     ({IconData icon, String label, Color color}) badge,
   ) {
     final theme = Theme.of(context);
-    return Card(
-      clipBehavior: Clip.antiAlias,
+    return GlassSurface(
       child: InkWell(
         onTap: () => _openBook(context),
         onLongPress: () => _showItemActions(context),
