@@ -610,23 +610,18 @@ class _ChapterFabState extends State<_ChapterFab> {
 
     return Stack(
       children: [
-        // 展开时局部遮罩：点一下收起菜单
+        // 竖排图标菜单：紧贴小圆钮上方；靠顶放不下时改放下方（绝不与圆钮重叠）
         if (_menuOpen)
-          Positioned.fill(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => setState(() => _menuOpen = false),
-              child: Container(color: Colors.black.withValues(alpha: 0.15)),
-            ),
-          ),
-        // 竖排菜单（按钮自下而上，紧贴小圆钮上方；顶部放不下时改放下方）
-        if (_menuOpen)
-          Positioned(
-            left: pos.dx.clamp(0.0, size.width - 132),
-            top: (pos.dy - 3 * (fabSize + 10) - 8).clamp(
-                8.0, (pos.dy + fabSize + 8).clamp(8.0, double.infinity)),
-            child: _buildMenu(context, scheme),
-          ),
+          Builder(builder: (context) {
+            const menuHeight = 3 * 48 + 2 * 4;
+            var menuTop = pos.dy - menuHeight - 8;
+            if (menuTop < 8) menuTop = pos.dy + 44 + 8;
+            return Positioned(
+              left: pos.dx.clamp(0.0, size.width - 48),
+              top: menuTop,
+              child: _buildMenu(context, scheme),
+            );
+          }),
         // 小圆钮本体
         Positioned(
           left: pos.dx,
@@ -636,8 +631,8 @@ class _ChapterFabState extends State<_ChapterFab> {
             onPanEnd: (_) => _persist(),
             onTap: () => setState(() => _menuOpen = !_menuOpen),
             child: Container(
-              width: fabSize,
-              height: fabSize,
+              width: 44,
+              height: 44,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: scheme.primaryContainer,
@@ -650,9 +645,7 @@ class _ChapterFabState extends State<_ChapterFab> {
                 ],
               ),
               child: Icon(
-                _menuOpen
-                    ? Icons.close_rounded
-                    : Icons.my_location_rounded,
+                _menuOpen ? Icons.close_rounded : Icons.my_location_rounded,
                 color: scheme.onPrimaryContainer,
                 size: 22,
               ),
@@ -664,22 +657,21 @@ class _ChapterFabState extends State<_ChapterFab> {
   }
 
   Widget _buildMenu(BuildContext context, ColorScheme scheme) {
-    Widget item(IconData icon, String label, VoidCallback onTap) {
+    Widget item(IconData icon, String tooltip, VoidCallback onTap) {
       return Material(
         color: Colors.transparent,
         child: InkWell(
-          borderRadius: BorderRadius.circular(22),
+          borderRadius: BorderRadius.circular(24),
           onTap: () {
             setState(() => _menuOpen = false);
             onTap();
           },
           child: Container(
-            width: 116,
-            height: fabSize,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
+            width: 48,
+            height: 48,
             decoration: BoxDecoration(
               color: scheme.surface,
-              borderRadius: BorderRadius.circular(22),
+              shape: BoxShape.circle,
               border: Border.all(
                   color: scheme.outlineVariant.withValues(alpha: 0.5)),
               boxShadow: [
@@ -690,20 +682,7 @@ class _ChapterFabState extends State<_ChapterFab> {
                 ),
               ],
             ),
-            child: Row(
-              children: [
-                Icon(icon, size: 20, color: scheme.primary),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-              ],
-            ),
+            child: Icon(icon, size: 22, color: scheme.primary),
           ),
         ),
       );
@@ -723,9 +702,9 @@ class _ChapterFabState extends State<_ChapterFab> {
                 )
               : null,
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 4),
         item(Icons.my_location_rounded, '定位播放', widget.onLocate),
-        const SizedBox(height: 10),
+        const SizedBox(height: 4),
         item(
           widget.descending ? Icons.south_rounded : Icons.north_rounded,
           widget.descending ? '改为正序' : '改为倒序',

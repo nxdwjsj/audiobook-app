@@ -137,20 +137,28 @@ class StorageService {
 
   // --- 悬浮播放球位置 ---
 
-  /// 浮球贴边侧：true = 右边，false = 左边。
-  Future<void> saveBallRight(bool right) async {
-    await config.put('ball_right', right);
+  /// 浮球球心 X（占屏宽比例 0~1，兼容旋转/分辨率变化）。
+  Future<void> saveBallDxRatio(double ratio) async {
+    await config.put('ball_dx_ratio', ratio);
   }
 
-  bool getBallRight() => config.get('ball_right') as bool? ?? true;
+  double getBallDxRatio() =>
+      (config.get('ball_dx_ratio') as num?)?.toDouble() ?? double.nan;
 
-  /// 浮球垂直位置（占屏幕高度比例 0~1），旋转屏幕后仍大致可用。
+  /// 浮球球心 Y（占屏高比例 0~1）。
   Future<void> saveBallDyRatio(double ratio) async {
     await config.put('ball_dy_ratio', ratio);
   }
 
   double getBallDyRatio() =>
       (config.get('ball_dy_ratio') as num?)?.toDouble() ?? 0.62;
+
+  /// 旧协议：贴边侧（true = 右）。无新坐标时用它推算初始 X。
+  Future<void> saveBallRight(bool right) async {
+    await config.put('ball_right', right);
+  }
+
+  bool getBallRight() => config.get('ball_right') as bool? ?? true;
 
   // --- 详情页目录工具条位置（绝对像素，null = 默认右下角）---
 
