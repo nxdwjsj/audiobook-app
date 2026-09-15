@@ -154,12 +154,14 @@ class AudioPlayerService extends ChangeNotifier {
   }) async {
     // 通知栏播放控制依赖通知权限（Android 13+），开始播放时申请时机最准
     await _ensureNotificationPermission();
-    _currentBook = book;
-    _chapters = book.chapters;
-    if (_chapters.isEmpty) {
+    // 空章节的书不切换当前书（避免 hasBook=true 但章节为空的半初始化状态，
+    // 那会导致目录面板 clamp(0, -1) 崩溃）
+    if (book.chapters.isEmpty) {
       notifyListeners();
       return;
     }
+    _currentBook = book;
+    _chapters = book.chapters;
     _currentChapterIndex = startChapter.clamp(0, _chapters.length - 1);
 
     await _startNewSession(startSeconds: startPosition.inSeconds);

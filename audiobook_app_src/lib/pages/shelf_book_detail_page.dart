@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/book.dart';
@@ -89,7 +90,8 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
   }
 
   /// 定位到正在播放章节（首次进入自动执行；浮动按钮可强制触发）。
-  /// 分页视图：切到所在页，再用 ensureVisible 滚到该行（不估算行高）。
+  /// 分页视图：切到所在页 → 若目标行未构建则按估算行高先滚到附近（让行进入构建区）
+  /// → ensureVisible 精确对齐（不依赖估算行高做最终定位）。
   void _scrollToPlaying({bool force = false}) {
     if (!mounted) return;
     if (!force && _scrolledToPlaying) return;
@@ -102,7 +104,8 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
     if (index < 0 || _chapters.isEmpty || index >= _chapters.length) return;
 
     final targetPage = (index / _pageSize).floor();
-    void locateRow() {
+    void locateRow({int retriesLeft = 3}) {
+      if (!mounted) return;
       final key = _chapterRowKeys[index];
       final ctx = key?.currentContext;
       if (ctx != null) {
@@ -112,7 +115,16 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
           curve: Curves.easeOutCubic,
           alignment: 0.4,
         );
+        return;
       }
+      // 行还没被懒加载构建：按估算行高滚到附近（4 个 header 行 + 章节行），
+      // 行进入构建区后下一帧再精确对齐
+      if (retriesLeft <= 0 || !_scrollController.hasClients) return;
+      final offset = (4 + index - _page * _pageSize) * 52.0 - 120;
+      _scrollController
+          .jumpTo(offset.clamp(0.0, _scrollController.position.maxScrollExtent));
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => locateRow(retriesLeft: retriesLeft - 1));
     }
 
     if (targetPage != _page) {
@@ -363,12 +375,16 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
     Widget? cover;
     if (_book.localCoverPath != null) {
       cover = Image.file(File(_book.localCoverPath!),
-          fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox());
+          fit: BoxFit.cover,
+          cacheWidth: 600,
+          errorBuilder: (_, __, ___) => const SizedBox());
     } else if (_book.coverUrl != null) {
-      cover = Image.network(
-        _book.coverUrl!,
+      // 详情页封面显示约 200px；用 CachedNetworkImage（磁盘缓存 + 限制解码尺寸）
+      cover = CachedNetworkImage(
+        imageUrl: _book.coverUrl!,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => const SizedBox(),
+        memCacheWidth: 600,
+        errorWidget: (_, __, ___) => const SizedBox(),
       );
     }
     return ClipRRect(

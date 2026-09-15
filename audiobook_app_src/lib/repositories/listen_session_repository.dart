@@ -15,12 +15,12 @@ class ListenSessionRepository extends ChangeNotifier {
   ListenSessionRepository(this._storage);
 
   List<ListenSession> getAll() {
-    return _storage.listenSessions.values
+    final list = _storage.listenSessions.values
         .map((v) =>
             ListenSession.fromJson(Map<String, dynamic>.from(v as Map)))
         .toList()
-      ..sort((a, b) => b.startedAt.compareTo(a.startedAt))
-      ..take(_maxRecords);
+      ..sort((a, b) => b.startedAt.compareTo(a.startedAt));
+    return list.take(_maxRecords).toList();
   }
 
   /// 手动点播：新建一条会话，删除同本书的旧记录（每本书只保留最新）。
@@ -54,8 +54,29 @@ class ListenSessionRepository extends ChangeNotifier {
       chapterTitle: chapterTitle,
     );
     await _storage.listenSessions.put(session.id, session.toJson());
+    await _trimToLimit();
     notifyListeners();
     return session;
+  }
+
+  /// 总量超过 [_maxRecords] 时删除最旧的记录。
+  Future<void> _trimToLimit() async {
+    while (_storage.listenSessions.length > _maxRecords) {
+      // 找 startedAt 最早的一条删掉
+      String? oldestId;
+      DateTime? oldestAt;
+      for (final entry in _storage.listenSessions.toMap().entries) {
+        final json = entry.value as Map;
+        final at = DateTime.tryParse(json['startedAt'] as String? ?? '') ??
+            DateTime.now();
+        if (oldestAt == null || at.isBefore(oldestAt)) {
+          oldestAt = at;
+          oldestId = entry.key as String;
+        }
+      }
+      if (oldestId == null) break;
+      await _storage.listenSessions.delete(oldestId);
+    }
   }
 
   /// 更新会话进度（自动连播、定时保存时调用）。

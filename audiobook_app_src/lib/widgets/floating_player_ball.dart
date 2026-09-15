@@ -37,19 +37,33 @@ class _FloatingPlayerBallState extends State<FloatingPlayerBall>
   /// 本次手势是否构成拖动（超过阈值则不算点击）
   bool _dragging = false;
 
-  /// 收起且播放中 → 跳动动画
-  late final AnimationController _bounce =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 900))
-        ..repeat(reverse: true);
+  /// 收起且播放中 → 跳动动画（build 里按需 repeat/stop，不常驻空转）
+  late final AnimationController _bounce = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 900));
 
   bool _initialized = false;
+  Size _lastSize = Size.zero;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_initialized) return;
-    final storage = context.read<StorageService>();
     final size = MediaQuery.of(context).size;
+    if (_initialized) {
+      // 旋转屏幕 / 窗口尺寸变化：按新旧尺寸比例重算球心，防止球停在可视区外
+      if (_lastSize != size && _lastSize != Size.zero) {
+        setState(() {
+          _center = Offset(
+            (_center.dx / _lastSize.width * size.width)
+                .clamp(ballSize / 2, size.width - ballSize / 2),
+            (_center.dy / _lastSize.height * size.height)
+                .clamp(80.0, size.height - 160),
+          );
+        });
+      }
+      _lastSize = size;
+      return;
+    }
+    final storage = context.read<StorageService>();
     // 新协议存球心比例；老用户没有 dx 时按「贴边侧」推算
     final dxRatio = storage.getBallDxRatio();
     final dyRatio = storage.getBallDyRatio().clamp(0.05, 0.9);
@@ -62,6 +76,7 @@ class _FloatingPlayerBallState extends State<FloatingPlayerBall>
               .clamp(ballSize / 2, size.width - ballSize / 2),
       (dyRatio * size.height).clamp(80.0, size.height - 160),
     );
+    _lastSize = size;
     _initialized = true;
   }
 
@@ -86,11 +101,17 @@ class _FloatingPlayerBallState extends State<FloatingPlayerBall>
     // 无书 / 播放页打开 → 不显示
     if (!player.hasBook || PlayerPage.isShown) {
       _expanded = false;
+      _stopBounceIfNeeded();
       return const SizedBox.shrink();
     }
 
     final size = MediaQuery.of(context).size;
-    // 展开后球不再跳动（横条接管显示）
+    // 跳动动画按需启停：只在「收起 + 播放中」跑，其余状态停掉（省电省 CPU）
+    if (!_expanded && player.isPlaying) {
+      if (!_bounce.isAnimating) _bounce.repeat(reverse: true);
+    } else {
+      _stopBounceIfNeeded();
+    }
     final bounce = !_expanded && player.isPlaying
         ? Tween<double>(begin: -0, end: -6)
             .animate(CurvedAnimation(parent: _bounce, curve: Curves.easeInOut))
@@ -110,6 +131,10 @@ class _FloatingPlayerBallState extends State<FloatingPlayerBall>
         );
       },
     );
+  }
+
+  void _stopBounceIfNeeded() {
+    if (_bounce.isAnimating) _bounce.stop();
   }
 
   /// 收起状态的悬浮球（可拖到任意位置）
@@ -184,6 +209,7 @@ class _FloatingPlayerBallState extends State<FloatingPlayerBall>
         fit: BoxFit.cover,
         width: ballSize,
         height: ballSize,
+        memCacheWidth: (ballSize * 2).round(), // 只解码显示所需尺寸，省内存
         errorWidget: (_, __, ___) => const SizedBox.shrink(),
       ),
     );
@@ -210,7 +236,26 @@ class _FloatingPlayerBallState extends State<FloatingPlayerBall>
         Positioned(
           left: barLeft,
           top: barTop,
-          child: Material(
+          // 展开动画：从球的大小/位置放大成横条 + 淡入（以球心为缩放锚点）
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0.0, end: 1.0),
+            duration: const Duration(milliseconds: 240),
+            curve: Curves.easeOutCubic,
+            builder: (context, t, child) {
+              return Transform.scale(
+                scale: 0.55 + 0.45 * t,
+                alignment: Alignment(
+                  ((center.dx - (barLeft + barWidth / 2)) /
+                          (barWidth / 2))
+                      .clamp(-1.0, 1.0),
+                  ((center.dy - (barTop + barHeight / 2)) /
+                          (barHeight / 2))
+                      .clamp(-1.0, 1.0),
+                ),
+                child: Opacity(opacity: t, child: child),
+              );
+            },
+            child: Material(
             elevation: 6,
             borderRadius: BorderRadius.circular(16),
             color: scheme.surface.withValues(alpha: 0.97),
@@ -244,6 +289,7 @@ class _FloatingPlayerBallState extends State<FloatingPlayerBall>
                                   ? CachedNetworkImage(
                                       imageUrl: book.coverUrl!,
                                       fit: BoxFit.cover,
+                                      memCacheWidth: 88,
                                       errorWidget: (_, __, ___) =>
                                           const SizedBox.shrink(),
                                     )
@@ -317,6 +363,7 @@ class _FloatingPlayerBallState extends State<FloatingPlayerBall>
                 ],
               ),
             ),
+          ),
           ),
         ),
       ],

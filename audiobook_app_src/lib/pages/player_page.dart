@@ -190,16 +190,19 @@ class PlayerPage extends StatelessWidget {
   }
 
   /// 本地封面（编辑信息选的图）用 Image.file，网络封面用缓存图。
+  /// 封面显示约 220px，限制解码尺寸避免大图全尺寸解码浪费内存。
   Widget _coverWidget(BuildContext context, String? coverUrl) {
     if (coverUrl == null) return _coverPlaceholder(context);
     if (coverUrl.startsWith('/')) {
       return Image.file(File(coverUrl),
           fit: BoxFit.cover,
+          cacheWidth: 600,
           errorBuilder: (_, __, ___) => _coverPlaceholder(context));
     }
     return CachedNetworkImage(
       imageUrl: coverUrl,
       fit: BoxFit.cover,
+      memCacheWidth: 600,
       errorWidget: (context, url, error) => _coverPlaceholder(context),
     );
   }
@@ -525,7 +528,7 @@ class PlayerPage extends StatelessWidget {
           ),
         ],
       ),
-    );
+    ).then((_) => controller.dispose());
   }
 
   void _showChapters(BuildContext context) {
@@ -569,14 +572,18 @@ class _ChapterSheet extends StatefulWidget {
 
 class _ChapterSheetState extends State<_ChapterSheet> {
   static const int pageSize = 300;
+  /// ListTile dense 实际行高（估算，用于把目标行「搬进」构建区）
+  static const double _rowExtent = 52.0;
 
   final ScrollController _listController = ScrollController();
   final ScrollController _chipController = ScrollController();
   final Map<int, GlobalKey> _rowKeys = {};
 
-  late int _page = (widget.player.currentChapterIndex.clamp(
-          0, widget.book.chapters.length - 1) / pageSize)
-      .floor();
+  late int _page = widget.book.chapters.isEmpty
+      ? 0
+      : (widget.player.currentChapterIndex.clamp(
+              0, widget.book.chapters.length - 1) / pageSize)
+          .floor();
 
   @override
   void initState() {
@@ -601,19 +608,26 @@ class _ChapterSheetState extends State<_ChapterSheet> {
       ((_page + 1) * pageSize).clamp(0, widget.book.chapters.length);
 
   /// 当前播放章节在第几页（用于「定位」按钮）。
-  int get _playingPage =>
-      (widget.player.currentChapterIndex.clamp(
-          0, widget.book.chapters.length - 1) / pageSize)
-      .floor();
+  int get _playingPage => widget.book.chapters.isEmpty
+      ? 0
+      : (widget.player.currentChapterIndex.clamp(
+              0, widget.book.chapters.length - 1) / pageSize)
+          .floor();
 
   void _locateCurrent() {
+    _locateCurrentInner(retriesLeft: 3);
+  }
+
+  void _locateCurrentInner({required int retriesLeft}) {
     if (!mounted) return;
+    if (widget.book.chapters.isEmpty) return;
     final index = widget.player.currentChapterIndex;
     if (index < 0 || index >= widget.book.chapters.length) return;
     // 章节不在当前页 → 先切页，等下一帧行构建出来再滚
     if (_playingPage != _page) {
       setState(() => _page = _playingPage);
-      WidgetsBinding.instance.addPostFrameCallback((_) => _locateCurrent());
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _locateCurrentInner(retriesLeft: retriesLeft));
       return;
     }
     final key = _rowKeys[index];
@@ -625,6 +639,16 @@ class _ChapterSheetState extends State<_ChapterSheet> {
         curve: Curves.easeOutCubic,
         alignment: 0.4, // 目标行停在视口 40% 处，便于看到上下文
       );
+      return;
+    }
+    // 目标行还没被构建（懒加载列表只构建视口附近）：
+    // 先按估算行高把列表滚到目标附近，让目标行进入构建区，下一帧再精确对齐
+    if (retriesLeft <= 0) return;
+    final offset = (index - _startIndex) * _rowExtent - 120;
+    if (_listController.hasClients) {
+      _listController.jumpTo(offset.clamp(0.0, _listController.position.maxScrollExtent));
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _locateCurrentInner(retriesLeft: retriesLeft - 1));
     }
   }
 

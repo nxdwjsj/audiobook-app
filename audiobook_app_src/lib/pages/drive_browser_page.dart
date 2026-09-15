@@ -58,6 +58,12 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
   String _filter = '';
   bool _showFoldersOnly = false;
 
+  /// 目录加载请求序号（竞态守卫：旧响应到达时被丢弃）。
+  int _loadSeq = 0;
+
+  /// 非空 = 当前展示的是分享解析结果（分享域文件，不能按自有盘导航进目录）。
+  List<DriveItem>? _shareItems;
+
   final TextEditingController _shareUrlController = TextEditingController();
   final TextEditingController _sharePwdController = TextEditingController();
   final TextEditingController _filterController = TextEditingController();
@@ -101,6 +107,8 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
 
   Future<void> _loadFolder({String? path, String? dirFileId}) async {
     final targetPath = path ?? _currentPath;
+    // 请求序号：快速连续导航时丢弃过期的旧响应（慢的旧请求后到会覆盖新目录）
+    final seq = ++_loadSeq;
     setState(() {
       _loading = true;
       _error = null;
@@ -112,15 +120,16 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
         path: targetPath,
         dirFileId: dirFileId,
       );
-      if (mounted) {
+      if (mounted && seq == _loadSeq) {
         setState(() {
           _items = items;
           _currentPath = targetPath;
+          _shareItems = null; // 正常目录浏览：清除分享态
           _loading = false;
         });
       }
     } catch (e) {
-      if (mounted) {
+      if (mounted && seq == _loadSeq) {
         setState(() {
           _error = e.toString();
           _loading = false;
@@ -311,6 +320,7 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
       if (mounted) {
         setState(() {
           _items = result.items;
+          _shareItems = result.items; // 标记分享态：禁用目录导航
           _loading = false;
         });
         ScaffoldMessenger.of(context).showSnackBar(
@@ -791,6 +801,13 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
       onLongPress: isDir ? () => _showFolderActions(item) : null,
       onTap: () {
         if (isDir) {
+          // 分享解析出的目录属于分享域（fid 不在自有盘），点进去必然请求失败
+          if (_shareItems != null) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('分享内容暂不支持进入子目录，可长按文件夹直接播放或加入书架')),
+            );
+            return;
+          }
           _navigateInto(item);
         } else if (isAudio) {
           _playSingleFile(item);

@@ -307,11 +307,13 @@ class _BookshelfItemState extends State<_BookshelfItem> {
   BookshelfBook get book => widget.book;
 
   /// 封面：本地图 → 网络图 → 首字占位图
+  /// 解码尺寸统一限制在 300px（书架封面显示约 100-150px × dpr2-3），省内存
   Widget _cover({double placeholderFontSize = 44}) {
     if (book.localCoverPath != null) {
       return Image.file(
         File(book.localCoverPath!),
         fit: BoxFit.cover,
+        cacheWidth: 300,
         errorBuilder: (_, __, ___) =>
             const _PlaceholderCover(title: ''),
       );
@@ -320,6 +322,7 @@ class _BookshelfItemState extends State<_BookshelfItem> {
       return CachedNetworkImage(
         imageUrl: book.coverUrl!,
         fit: BoxFit.cover,
+        memCacheWidth: 300,
         errorWidget: (context, url, error) =>
             _PlaceholderCover(title: book.title),
       );

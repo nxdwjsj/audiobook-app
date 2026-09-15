@@ -7,6 +7,7 @@ import '../repositories/listen_session_repository.dart';
 import '../services/audio_player_service.dart';
 import '../widgets/throttled_navigator.dart';
 import 'shelf_book_detail_page.dart';
+import 'player_page.dart';
 import '../models/book.dart';
 
 /// 收听历史页：会话制记录——每次手动点播一条记录，
@@ -192,24 +193,29 @@ class _SessionTile extends StatelessWidget {
   }
 
   void _continuePlaying(BuildContext context) {
-    // 正在播放当前书：直接进入详情页查看
+    // 不在书架中：无论是否正在播放都不能进详情页（shelfBook 为 null）
     final player = context.read<AudioPlayerService>();
-    if (player.hasBook && player.currentBook!.id == session.bookId) {
-      context.pushThrottled(MaterialPageRoute(
-        builder: (_) => ShelfBookDetailPage(book: shelfBook!),
-      ));
-      return;
-    }
-    // 不在书架中或换书了：直接从这里播放，不打断其他收听（按手册要求「不需要在线功能、只需要网盘」）
     if (shelfBook == null) {
-      if (context.mounted) {
+      // 正在播放这本书：至少还能进播放页
+      if (player.hasBook && player.currentBook!.id == session.bookId) {
+        context.pushThrottled(MaterialPageRoute(
+          builder: (_) => const PlayerPage(),
+        ));
+      } else if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('「${session.bookTitle}」已不在书架中，无法继续播放')),
         );
       }
       return;
     }
-    // 通过播放器服务点播这本书，并从 session 记录的章节与位置续播
+    // 正在播放当前书：直接进入详情页查看
+    if (player.hasBook && player.currentBook!.id == session.bookId) {
+      context.pushThrottled(MaterialPageRoute(
+        builder: (_) => ShelfBookDetailPage(book: shelfBook!),
+      ));
+      return;
+    }
+    // 换书了：通过播放器服务点播这本书，并从 session 记录的章节与位置续播
     context.read<AudioPlayerService>().playBook(
           _buildPlayBook(),
           startChapter: session.chapterIndex,

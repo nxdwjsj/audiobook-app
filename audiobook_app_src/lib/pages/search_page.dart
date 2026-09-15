@@ -44,6 +44,8 @@ class _SearchPageState extends State<SearchPage> {
   }
 
   void _onChanged() {
+    // 输入变化立即重建（清除按钮要实时出现/消失），搜索本身仍走防抖
+    setState(() {});
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 600), _search);
   }
