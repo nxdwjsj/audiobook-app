@@ -8,8 +8,10 @@ import '../models/bookshelf_book.dart';
 import '../models/chapter.dart';
 import '../models/drive_item.dart';
 import '../repositories/bookshelf_repository.dart';
+import '../repositories/book_source_repository.dart';
 import '../repositories/progress_repository.dart';
 import '../services/audio_player_service.dart';
+import '../services/book_source/online_book_hit.dart';
 import '../services/local_import_service.dart';
 import '../services/storage_service.dart';
 import '../widgets/frosted_glass.dart';
@@ -335,6 +337,26 @@ class _BookshelfItemState extends State<_BookshelfItem> {
   ({IconData icon, String label, Color color}) _sourceBadge(BuildContext context) {
     if (book.isLocal) {
       return (icon: Icons.download_rounded, label: '本地', color: Colors.teal);
+    }
+    // 在线书源：id 是 online_{书源id}_{路径}，解析出书源名显示
+    if (book.id.startsWith('online_')) {
+      final repo = context.read<BookSourceRepository>();
+      final sourceId = onlineSourceIdOfBookId(
+          book.id, repo.all.map((s) => s.id));
+      final name =
+          repo.all.where((s) => s.id == sourceId).firstOrNull?.name;
+      if (name != null && name.isNotEmpty) {
+        return (
+          icon: Icons.public_rounded,
+          label: name,
+          color: Colors.orange
+        );
+      }
+      return (
+        icon: Icons.public_rounded,
+        label: '在线',
+        color: Colors.orange
+      );
     }
     switch (book.driveType) {
       case DriveType.baidu:

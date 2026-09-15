@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:audiobook_app/services/book_source/book_source.dart';
 import 'package:audiobook_app/services/book_source/book_source_engine.dart';
 import 'package:audiobook_app/services/book_source/online_book_hit.dart';
+import 'package:audiobook_app/services/book_source/webview_fetcher.dart';
 
 void main() {
   group('BookSource online 型模型', () {
@@ -451,6 +452,71 @@ void main() {
       expect(audio, startsWith('http://audiopay.cos.tx.xmcdn.com/'));
       expect(audio, contains('-48K.m4a?sign='));
       expect(audio, isNot(contains(r'\')));
+    });
+  });
+
+  group('挑战页识别（WebViewFetcher.isChallengePage）', () {
+    test('13 听书第一层：134 字节跳转型挑战页', () {
+      // 实测样本：403 后返回的整页，只有一个跳转脚本
+      const jumpPage =
+          '<html><head></head><body><script>window.location.href ="/play/38968_1_207153.html";</script></body></html>';
+      expect(WebViewFetcher.isChallengePage(jumpPage), isTrue);
+    });
+
+    test('13 听书第二层：var reversed 混淆挑战页', () {
+      const reversedPage =
+          '<html><script>var reversed = "kcab"; document.cookie=…;</script></html>';
+      expect(WebViewFetcher.isChallengePage(reversedPage), isTrue);
+    });
+
+    test('正常短内容（频控「操作太快」）不算挑战页', () {
+      expect(WebViewFetcher.isChallengePage('您的操作太快了，请稍后再试'), isFalse);
+    });
+
+    test('含 location.href 的正常长页面不误伤', () {
+      // 登录跳转、播放器代码等正常页面常有 location.href 赋值
+      final filler = List.filled(
+          50, '<p>一些很长的正文内容。比如章节简介、评论区、推荐列表等。</p>').join();
+      final normalPage = '<html><body>$filler'
+          '<script>if (needLogin) { window.location.href ="/login.html"; }</script>'
+          '</body></html>';
+      expect(WebViewFetcher.isChallengePage(normalPage), isFalse);
+    });
+  });
+
+  group('onlineSourceIdOfBookId', () {
+    test('常规：解析出书源 id', () {
+      expect(
+        onlineSourceIdOfBookId(
+            'online_ting13_youshengxiaoshuo_38968', ['ting13', 'i275']),
+        'ting13',
+      );
+      expect(
+        onlineSourceIdOfBookId(
+            'online_i275_book_138', ['ting13', 'i275']),
+        'i275',
+      );
+    });
+
+    test('书源 id 含下划线时也能正确匹配（按已知前缀，不盲切）', () {
+      expect(
+        onlineSourceIdOfBookId(
+            'online_my_src_a_b', ['my_src', 'other']),
+        'my_src',
+      );
+      // 前缀歧义时按传入顺序取第一个命中的
+      expect(
+        onlineSourceIdOfBookId(
+            'online_my_src_a', ['my', 'my_src']),
+        'my',
+      );
+    });
+
+    test('未知书源 / 非在线书 id 返回空串', () {
+      expect(
+          onlineSourceIdOfBookId('online_unknown_x', ['ting13']), '');
+      expect(onlineSourceIdOfBookId('local_abc', ['ting13']), '');
+      expect(onlineSourceIdOfBookId('quark_xyz', ['ting13']), '');
     });
   });
 }

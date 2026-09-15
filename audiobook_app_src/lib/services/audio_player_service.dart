@@ -272,6 +272,11 @@ class AudioPlayerService extends ChangeNotifier {
     // 站点限流/首次握手慢导致的偶发失败很常见。不重试的话界面已高亮新章
     // 却没有声音，用户只能再点一次目录（表现为「要点两次才切成功」）。
     if (lastError != null) {
+      // 在线书源站点多有频控（如 275听书「操作太快」），立即重试必失败，
+      // 歇一下再试；网盘章节无此限制，立即重试尽快恢复。
+      if (_currentBook?.id.startsWith('online_') ?? false) {
+        await Future.delayed(const Duration(milliseconds: 1300));
+      }
       debugPrint('[Player] 切章首次失败，立即重试一次: ${_chapters[index].title}');
       await _loadCurrentChapter();
     }

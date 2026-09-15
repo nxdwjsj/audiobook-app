@@ -113,6 +113,16 @@ class BookSourceEngine {
   static final RegExp _blockedHint =
       RegExp(r'var reversed|__51guid__|_guard/auto\.js');
 
+  /// 跳转型挑战页（如 13 听书网 403 后的 window.location.href 跳转页）
+  /// 不在 _blockedHint 里，但 WebViewFetcher 的统一判定能覆盖它
+  /// （页面内 fetch 不会执行跳转脚本，拿到跳转页说明会话没建立，得改走导航）。
+  bool _looksBlocked(String html) {
+    final text = html.trim();
+    return text.length < 200 ||
+        _blockedHint.hasMatch(text) ||
+        WebViewFetcher.isChallengePage(text);
+  }
+
   String get _cookieHeader =>
       _cookies.entries.map((e) => '${e.key}=${e.value}').join('; ');
 
@@ -125,11 +135,6 @@ class BookSourceEngine {
       if (eq <= 0) continue;
       _cookies[first.substring(0, eq)] = first.substring(eq + 1);
     }
-  }
-
-  bool _looksBlocked(String html) {
-    final text = html.trim();
-    return text.length < 200 || _blockedHint.hasMatch(text);
   }
 
   // ------------------------------------------------------------------
@@ -445,11 +450,14 @@ class BookSourceEngine {
     );
     var m = audioRe.firstMatch(html);
     if (m == null) {
-      // 仍然没有音频 → 再走一遍「建会话 + 重试」
+      // 仍然没有音频 → 再走一遍「建会话 + 重试」。
+      // 重试前必须歇一下：这类站点（如 275听书）有频控，连续请求会返回
+      // 「您的操作太快了」——实测 1 秒出头即可恢复，立即重试永远失败。
       if (root.isNotEmpty) {
         debugPrint('[BookSource ${source.id}] 播放页未取到音频，先访问 $root 建会话后重试');
         try {
           await _get(root, headers: source.detailHeaders);
+          await Future.delayed(const Duration(milliseconds: 1200));
           final retry = await _get(
             chapterUrl,
             headers: source.detailHeaders,

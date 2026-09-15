@@ -52,6 +52,17 @@ String resolveUrl(String base, String maybeRelative) {
   return Uri.parse(base).resolve(rel).toString();
 }
 
+/// 从在线书的 id（online_{书源id}_{路径}）解析出书源 id。
+/// 与搜索页 _onlineBookIdFor 的生成规则对应；书源 id 本身可含下划线，
+/// 所以按「书架里实际存在的书源 id」逐个前缀匹配，而不是盲切。
+String onlineSourceIdOfBookId(String bookId, Iterable<String> knownSourceIds) {
+  if (!bookId.startsWith('online_')) return '';
+  for (final id in knownSourceIds) {
+    if (bookId.startsWith('online_${id}_')) return id;
+  }
+  return '';
+}
+
 /// 把一个详情页 JSON 转回 [OnlineBookHit]（书架缓存用）。
 Map<String, dynamic> onlineHitToJson(OnlineBookHit hit) => {
       'source': hit.source,

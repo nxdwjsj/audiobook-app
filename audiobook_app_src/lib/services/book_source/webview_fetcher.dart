@@ -31,6 +31,21 @@ class WebViewFetcher {
   static final RegExp _challengeHint =
       RegExp(r'var reversed|__51guid__|_guard/auto\.js|location\.reload\(');
 
+  /// 跳转型挑战页特征：整页只有一个脚本把 location.href 指到别处
+  /// （如 13 听书网 403 后返回的 134 字节跳转页）。
+  /// 只对「短页面」生效：正常页面里也常出现 location.href 赋值（登录跳转等），
+  /// 按特征单独匹配会误伤；短页面 + 跳转脚本基本只有挑战页一种可能。
+  static final RegExp _jumpHint =
+      RegExp(r'''window\.location\.href\s*=\s*["']?\s*/''');
+
+  static bool _isJumpChallenge(String html) =>
+      html.length < 1000 && _jumpHint.hasMatch(html);
+
+  /// 页面是否处于「未过挑战」状态（reload 型或跳转型），供引擎判定
+  /// 页面内 fetch 的结果是否可用。
+  static bool isChallengePage(String html) =>
+      _challengeHint.hasMatch(html) || _isJumpChallenge(html);
+
   /// 一次导航最多容忍几次重载（挑战 + 站点自身的跳转），防止死循环。
   static const int _maxLoads = 4;
 
@@ -157,7 +172,10 @@ class WebViewFetcher {
           debugPrint('[WebViewFetcher] 读取 DOM 失败: $e');
         }
         // 还在挑战页且还有重载机会 → 挑战脚本会自己 reload，等下一次回调
-        if (_challengeHint.hasMatch(html) && loads < _maxLoads) return;
+        if (loads < _maxLoads &&
+            (_challengeHint.hasMatch(html) || _isJumpChallenge(html))) {
+          return;
+        }
         if (!done.isCompleted) done.complete(html);
       }
 

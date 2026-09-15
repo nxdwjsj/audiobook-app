@@ -9,8 +9,10 @@ import '../models/chapter.dart';
 import '../models/drive_item.dart';
 import '../models/playback_progress.dart';
 import '../repositories/bookshelf_repository.dart';
+import '../repositories/book_source_repository.dart';
 import '../repositories/progress_repository.dart';
 import '../services/audio_player_service.dart';
+import '../services/book_source/online_book_hit.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/throttled_navigator.dart';
@@ -390,6 +392,18 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
 
   String _sourceLabel() {
     if (_book.isLocal) return '本地导入';
+    // 在线书源：id 是 online_{书源id}_{路径}，从中解析书源名
+    if (_book.id.startsWith('online_')) {
+      final repo = context.read<BookSourceRepository>();
+      final sourceId = onlineSourceIdOfBookId(
+          _book.id, repo.all.map((s) => s.id));
+      if (sourceId.isNotEmpty) {
+        final name =
+            repo.all.where((s) => s.id == sourceId).firstOrNull?.name;
+        if (name != null && name.isNotEmpty) return '来自$name';
+      }
+      return '在线书源';
+    }
     switch (_book.driveType) {
       case DriveType.quark:
         return '夸克网盘';
