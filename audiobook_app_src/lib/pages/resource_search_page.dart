@@ -19,14 +19,13 @@ import 'book_source_page.dart';
 import 'drive_browser_page.dart';
 import 'shelf_book_detail_page.dart';
 
-/// 搜索范围。搜索前可勾选，三路来源的结果分开展示、不会混在一起。
-enum _Scope { local, drive, online }
+/// 搜索范围（搜索前可勾选）：
+/// - local：本地（书架 + 我的夸克网盘文件）
+/// - share：网盘分享链接（书源爬取到的分享，可转存后播放）
+/// - online：在线听书站（点开即听）
+enum _Scope { local, share, online }
 
-/// 统一搜索页：一个入口搜「本地书架 / 我的网盘 / 网盘分享 / 在线听书」。
-///
-/// - 本地：书架里的书（内存过滤）
-/// - 网盘：我的网盘文件 + 书源发现的网盘分享链接
-/// - 在线：在线听书站（点开即听，无需转存）
+/// 统一搜索页：一个入口搜「本地 / 网盘分享 / 在线听书」。
 class ResourceSearchPage extends StatefulWidget {
   const ResourceSearchPage({super.key});
 
@@ -37,15 +36,18 @@ class ResourceSearchPage extends StatefulWidget {
 class _ResourceSearchPageState extends State<ResourceSearchPage> {
   final TextEditingController _keyword = TextEditingController();
 
-  /// 已勾选的搜索范围，默认三路全开。
+  /// 已勾选的搜索范围，默认全开。
   final Set<_Scope> _scopes = {
     _Scope.local,
-    _Scope.drive,
+    _Scope.share,
     _Scope.online,
   };
 
+  /// 已收起的分区（点标题收起/展开）。
+  final Set<String> _collapsed = {};
+
   // --- 结果：按来源分区存放，互不混排 ---
-  final List<BookshelfBook> _shelfResults = []; // 本地书架
+  final List<BookshelfBook> _shelfResults = []; // 书架
   final List<DriveItem> _driveResults = []; // 我的网盘文件
   final List<ResourceResult> _shareResults = []; // 网盘分享链接
   final List<OnlineBookHit> _onlineHits = []; // 在线听书站
@@ -139,7 +141,7 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
       _progress = '准备…';
     });
 
-    // 本地书架：内存过滤，无需等待
+    // 本地：书架（内存过滤）+ 我的网盘文件
     if (_scopes.contains(_Scope.local)) {
       final q = kw.toLowerCase();
       final shelf = context
@@ -154,8 +156,10 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
 
     // 三路网络搜索并行，各自写入自己的分区
     final tasks = <Future<void>>[];
-    if (_scopes.contains(_Scope.drive)) {
+    if (_scopes.contains(_Scope.local)) {
       tasks.add(_searchDriveFiles(kw));
+    }
+    if (_scopes.contains(_Scope.share)) {
       tasks.add(_searchShares(kw));
     }
     if (_scopes.contains(_Scope.online)) {
@@ -384,20 +388,19 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
               ],
             ),
           ),
-          // 搜索范围：本地 / 网盘 / 在线，搜索前可自由勾选
+          // 搜索范围：本地（含我的网盘）/ 网盘分享 / 在线，搜索前可自由勾选
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 2),
-            child: Wrap(
-              spacing: 8,
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 2),
+            child: Row(
               children: [
-                _scopeChip(_Scope.local, '本地书架', Icons.library_books_rounded),
-                _scopeChip(_Scope.drive, '网盘', Icons.cloud_rounded),
-                _scopeChip(_Scope.online, '在线听书', Icons.headphones_rounded),
+                _scopeChip(_Scope.local, '本地', Icons.folder_special_rounded),
+                _scopeChip(_Scope.share, '网盘', Icons.cloud_rounded),
+                _scopeChip(_Scope.online, '在线', Icons.headphones_rounded),
               ],
             ),
           ),
           // 转存到网盘的哪个目录（仅网盘分享用得到，点一下可更换，选择会被记住）
-          if (_scopes.contains(_Scope.drive))
+          if (_scopes.contains(_Scope.share))
             Padding(
               padding: const EdgeInsets.fromLTRB(18, 0, 18, 4),
               child: InkWell(
@@ -446,27 +449,66 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
     );
   }
 
-  /// 搜索范围勾选 chip（可多选）。
+  /// 搜索范围勾选 chip：三个等宽排一行，选中/未选中一眼可辨。
   Widget _scopeChip(_Scope scope, String label, IconData icon) {
     final selected = _scopes.contains(scope);
-    return FilterChip(
-      avatar: Icon(icon, size: 16),
-      label: Text(label),
-      selected: selected,
-      visualDensity: VisualDensity.compact,
-      onSelected: _searching
-          ? null
-          : (v) => setState(() {
-                if (v) {
-                  _scopes.add(scope);
-                } else {
-                  _scopes.remove(scope);
-                }
-              }),
+    final scheme = Theme.of(context).colorScheme;
+    final fg = selected ? scheme.primary : scheme.onSurfaceVariant;
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: _searching
+              ? null
+              : () => setState(() {
+                    if (selected) {
+                      _scopes.remove(scope);
+                    } else {
+                      _scopes.add(scope);
+                    }
+                  }),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
+            decoration: BoxDecoration(
+              color: selected
+                  ? scheme.primary.withValues(alpha: 0.12)
+                  : scheme.onSurface.withValues(alpha: 0.05),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: selected
+                    ? scheme.primary.withValues(alpha: 0.55)
+                    : Colors.transparent,
+              ),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 15, color: fg),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: fg,
+                      fontWeight:
+                          selected ? FontWeight.w600 : FontWeight.normal,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
-  /// 结果区：按来源分成四个分区，先本地、再网盘（文件 + 分享）、最后在线。
+  /// 结果区：本地（书架 + 我的网盘）、网盘分享、在线听书，各自成区。
+  /// 每个分区标题可点，收起后只留标题。
   Widget _buildResults() {
     final noResult = _shelfResults.isEmpty &&
         _driveResults.isEmpty &&
@@ -480,8 +522,9 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
         child: Padding(
           padding: EdgeInsets.symmetric(horizontal: 32),
           child: Text(
-            '一个入口搜全部：本地书架 / 我的网盘 / 网盘分享 / 在线听书\n'
-            '三路结果分开显示，不会混在一起',
+            '一个入口搜全部\n'
+            '本地（书架 + 我的网盘）/ 网盘分享 / 在线听书\n'
+            '结果按来源分开显示，不会混在一起',
             textAlign: TextAlign.center,
           ),
         ),
@@ -490,82 +533,125 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
     return ListView(
       padding: const EdgeInsets.only(bottom: 24),
       children: [
-        // 1. 本地书架
+        // ---- 本地：书架 ----
         if (_scopes.contains(_Scope.local)) ...[
           _sectionHeader(
-              Icons.library_books_rounded, '本地书架', _shelfResults.length),
-          if (_shelfResults.isEmpty)
-            _emptyHint('书架中没有匹配的书')
-          else
-            ..._shelfResults.map(_buildShelfTile),
+            'shelf',
+            Icons.library_books_rounded,
+            '书架',
+            _shelfResults.length,
+          ),
+          if (!_collapsed.contains('shelf'))
+            if (_shelfResults.isEmpty)
+              _emptyHint('书架中没有匹配的书')
+            else
+              ..._shelfResults.map(_buildShelfTile),
+          // ---- 本地：我的网盘文件 ----
+          _sectionHeader(
+            'drive',
+            Icons.folder_rounded,
+            '我的网盘',
+            _driveResults.length,
+            loading: _driveLoading,
+          ),
+          if (!_collapsed.contains('drive'))
+            if (_driveError != null)
+              _emptyHint('网盘搜索失败：$_driveError')
+            else if (_driveResults.isEmpty)
+              _emptyHint('网盘中没有匹配的文件')
+            else
+              ..._driveResults.map(_buildDriveTile),
         ],
-        // 2. 我的网盘文件
-        if (_scopes.contains(_Scope.drive)) ...[
-          _sectionHeader(Icons.folder_rounded, '我的网盘', _driveResults.length),
-          if (_driveLoading)
-            const Padding(
-              padding: EdgeInsets.all(20),
-              child: Center(child: CircularProgressIndicator()),
-            )
-          else if (_driveError != null)
-            _emptyHint('网盘搜索失败：$_driveError')
-          else if (_driveResults.isEmpty)
-            _emptyHint('网盘中没有匹配的文件')
-          else
-            ..._driveResults.map(_buildDriveTile),
-          // 3. 网盘分享链接
-          _sectionHeader(Icons.link_rounded, '网盘分享', _shareResults.length),
-          if (_searching && _shareResults.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(20),
-              child: Center(child: CircularProgressIndicator()),
-            )
-          else if (_shareResults.isEmpty)
-            _emptyHint('没有发现相关的网盘分享')
-          else
-            ..._shareResults.map(_buildCard),
+        // ---- 网盘分享链接 ----
+        if (_scopes.contains(_Scope.share)) ...[
+          _sectionHeader(
+            'share',
+            Icons.link_rounded,
+            '网盘分享',
+            _shareResults.length,
+            loading: _searching && _shareResults.isEmpty,
+          ),
+          if (!_collapsed.contains('share'))
+            if (_shareResults.isEmpty)
+              _emptyHint('没有发现相关的网盘分享')
+            else
+              ..._shareResults.map(_buildCard),
         ],
-        // 4. 在线听书站
+        // ---- 在线听书站 ----
         if (_scopes.contains(_Scope.online)) ...[
-          _sectionHeader(Icons.headphones_rounded, '在线听书', _onlineHits.length),
-          if (_searching && _onlineHits.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(20),
-              child: Center(child: CircularProgressIndicator()),
-            )
-          else if (_onlineHits.isEmpty)
-            _emptyHint('在线书源没有搜到相关有声书')
-          else
-            ..._onlineHits.map(_buildOnlineCard),
+          _sectionHeader(
+            'online',
+            Icons.headphones_rounded,
+            '在线听书',
+            _onlineHits.length,
+            loading: _searching && _onlineHits.isEmpty,
+          ),
+          if (!_collapsed.contains('online'))
+            if (_onlineHits.isEmpty)
+              _emptyHint('在线书源没有搜到相关有声书')
+            else
+              ..._onlineHits.map(_buildOnlineCard),
         ],
       ],
     );
   }
 
-  Widget _sectionHeader(IconData icon, String label, int count) {
+  /// 分区标题：点一下收起/展开该分区。
+  Widget _sectionHeader(
+    String key,
+    IconData icon,
+    String label,
+    int count, {
+    bool loading = false,
+  }) {
     final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-      child: Row(
-        children: [
-          Icon(icon, size: 18, color: scheme.primary),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: Theme.of(context)
-                .textTheme
-                .titleSmall
-                ?.copyWith(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(width: 6),
-          Text(
-            '$count',
-            style: Theme.of(context)
-                .textTheme
-                .bodySmall
-                ?.copyWith(color: scheme.onSurfaceVariant),
-          ),
-        ],
+    final collapsed = _collapsed.contains(key);
+    return InkWell(
+      onTap: () => setState(() {
+        if (collapsed) {
+          _collapsed.remove(key);
+        } else {
+          _collapsed.add(key);
+        }
+      }),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 12, 4),
+        child: Row(
+          children: [
+            Icon(icon, size: 18, color: scheme.primary),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: Theme.of(context)
+                  .textTheme
+                  .titleSmall
+                  ?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(width: 6),
+            if (loading)
+              const SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else
+              Text(
+                '$count',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+            const Spacer(),
+            Icon(
+              collapsed
+                  ? Icons.expand_more_rounded
+                  : Icons.expand_less_rounded,
+              size: 20,
+              color: scheme.onSurfaceVariant,
+            ),
+          ],
+        ),
       ),
     );
   }

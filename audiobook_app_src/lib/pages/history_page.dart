@@ -212,7 +212,12 @@ class _SessionTile extends StatelessWidget {
 
   bool _isCurrentlyPlaying(BuildContext context) {
     final player = context.read<AudioPlayerService>();
-    return player.hasBook && player.currentBook!.id == session.bookId;
+    if (!player.hasBook || player.currentBook!.id != session.bookId) {
+      return false;
+    }
+    // 同一本书的其它集不算：只有正在播的这一集才标「正在播放」，
+    // 否则同书的多条历史会全部亮起
+    return player.currentChapterIndex == session.chapterIndex;
   }
 
   String _fmtStart(DateTime t) {
@@ -233,8 +238,9 @@ class _SessionTile extends StatelessWidget {
   }
 
   void _continuePlaying(BuildContext context) {
-    // 不在书架中：无论是否正在播放都不能进详情页（shelfBook 为 null）
     final player = context.read<AudioPlayerService>();
+    final position = Duration(seconds: session.positionSeconds);
+    // 不在书架中：无论是否正在播放都不能进详情页（shelfBook 为 null）
     if (shelfBook == null) {
       // 正在播放这本书：至少还能进播放页
       if (player.hasBook && player.currentBook!.id == session.bookId) {
@@ -246,17 +252,24 @@ class _SessionTile extends StatelessWidget {
       }
       return;
     }
-    // 已在播放本书：直接进播放页（点历史就是要接着听，不进详情页）
+    // 已点开本书：要跳到这条记录对应的那一集与进度，
+    // 不能只把播放页推出来（否则集数和时间都对不上）
     if (player.hasBook && player.currentBook!.id == session.bookId) {
+      if (player.currentChapterIndex != session.chapterIndex) {
+        player.jumpToChapter(session.chapterIndex, startPosition: position);
+      } else if (position > Duration.zero &&
+          (player.position - position).abs() > const Duration(seconds: 5)) {
+        player.seek(position);
+      }
       context.pushPlayerPage();
       return;
     }
     // 换书了：通过播放器服务点播这本书，并从 session 记录的章节与位置续播
-    context.read<AudioPlayerService>().playBook(
-          _buildPlayBook(),
-          startChapter: session.chapterIndex,
-          startPosition: Duration(seconds: session.positionSeconds),
-        );
+    player.playBook(
+      _buildPlayBook(),
+      startChapter: session.chapterIndex,
+      startPosition: position,
+    );
     // 直接进播放页开始听
     if (context.mounted) context.pushPlayerPage();
   }

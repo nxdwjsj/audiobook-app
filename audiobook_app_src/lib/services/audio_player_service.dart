@@ -258,11 +258,15 @@ class AudioPlayerService extends ChangeNotifier {
   }
 
   /// 手动切章（详情页点某一章）：同样视为一次新的收听起点。
-  Future<void> jumpToChapter(int index) async {
+  /// [startPosition] 用于切到该章后再定位到指定进度（从历史记录续播）。
+  Future<void> jumpToChapter(
+    int index, {
+    Duration startPosition = Duration.zero,
+  }) async {
     if (index < 0 || index >= _chapters.length) return;
     _switchingChapter = true;
     _currentChapterIndex = index;
-    await _startNewSession();
+    await _startNewSession(startSeconds: startPosition.inSeconds);
     await _loadCurrentChapter();
     // 首次加载失败立刻重试一次：在线章节要在播放时抓播放页解析直链，
     // 站点限流/首次握手慢导致的偶发失败很常见。不重试的话界面已高亮新章
@@ -274,7 +278,7 @@ class AudioPlayerService extends ChangeNotifier {
     if (lastError != null) {
       _scheduleAdvanceRetry();
     } else {
-      await _resumeAfterLoad();
+      await _resumeAfterLoad(startPosition);
     }
     notifyListeners();
   }
@@ -855,11 +859,12 @@ class AudioPlayerService extends ChangeNotifier {
   /// 加载成功后接上播放，并清掉自动重试状态。
   /// 必须重置 retrying：否则用户手动切章成功后，播放页会一直挂着
   /// 「正在自动重试…」的假提示。
-  Future<void> _resumeAfterLoad() async {
+  /// [startPosition] 为续播起点（默认 0，即按「跳过片头」规则从头开始）。
+  Future<void> _resumeAfterLoad([Duration startPosition = Duration.zero]) async {
     _advanceRetryTimer?.cancel();
     _advanceRetries = 0;
     retrying = false;
-    await _seekToStart(Duration.zero);
+    await _seekToStart(startPosition);
     await _player.play();
   }
 
