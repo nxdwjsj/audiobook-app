@@ -1,22 +1,29 @@
+import 'dart:io';
+import 'dart:math' as math;
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/book.dart';
+import '../pages/player_page.dart';
+import '../repositories/bookshelf_repository.dart';
 import '../services/audio_player_service.dart';
 import '../services/storage_service.dart';
-import '../pages/player_page.dart';
 import 'throttled_navigator.dart';
 
 /// 全局悬浮播放球：
 /// - 可拖到屏幕任意位置（松手持久化；拖动期间水平/垂直都自由）
-/// - 播放中收起时轻微上下跳动
+/// - 播放中收起时球内显示跳动的声波条（球本体不位移）
+/// - 封面优先取书架的自定义封面（用户从相册选的），其次本地路径、网络封面
 /// - 单击从球的位置展开成小横条：左半图书信息（点击进播放页）、右半功能键
-///   （上一章 / 播放暂停 / 下一章）；展开状态不遮罩，不挡下层页面操作，
-///   再点横条空白处（或球）收起
+///   （上一章 / 播放暂停 / 下一章）；展开状态不遮罩，不挡下层页面操作
+/// - 展开后在屏幕任意位置滑动 → 自动收回成球
 /// - 无正在播放的书（player.hasBook == false）时自动隐藏
 /// - 播放页已打开时自动隐藏（避免遮挡）
 ///
 /// 挂载方式：MaterialApp.builder 里包在所有路由之上（见 main.dart）。
+/// 注意：本组件不在 Navigator 子树内，跳转必须走 appNavigatorKey
+/// （见 throttled_navigator.dart）。
 class FloatingPlayerBall extends StatefulWidget {
   const FloatingPlayerBall({super.key});
 
@@ -37,9 +44,12 @@ class _FloatingPlayerBallState extends State<FloatingPlayerBall>
   /// 本次手势是否构成拖动（超过阈值则不算点击）
   bool _dragging = false;
 
-  /// 收起且播放中 → 跳动动画（build 里按需 repeat/stop，不常驻空转）
-  late final AnimationController _bounce = AnimationController(
-      vsync: this, duration: const Duration(milliseconds: 900));
+  /// 展开状态下累计的滑动量（超过阈值收起回球）
+  double _moveAccum = 0;
+
+  /// 收起且播放中 → 球内声波条动画（build 里按需 repeat/stop，不常驻空转）
+  late final AnimationController _wave = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 1200));
 
   bool _initialized = false;
   Size _lastSize = Size.zero;
@@ -82,7 +92,7 @@ class _FloatingPlayerBallState extends State<FloatingPlayerBall>
 
   @override
   void dispose() {
-    _bounce.dispose();
+    _wave.dispose();
     super.dispose();
   }
 
@@ -101,48 +111,99 @@ class _FloatingPlayerBallState extends State<FloatingPlayerBall>
     // 无书 / 播放页打开 → 不显示
     if (!player.hasBook || PlayerPage.isShown) {
       _expanded = false;
-      _stopBounceIfNeeded();
+      _stopWaveIfNeeded();
       return const SizedBox.shrink();
     }
 
     final size = MediaQuery.of(context).size;
-    // 跳动动画按需启停：只在「收起 + 播放中」跑，其余状态停掉（省电省 CPU）
+    // 声波动画按需启停：只在「收起 + 播放中」跑，其余状态停掉（省电省 CPU）
     if (!_expanded && player.isPlaying) {
-      if (!_bounce.isAnimating) _bounce.repeat(reverse: true);
+      if (!_wave.isAnimating) _wave.repeat();
     } else {
-      _stopBounceIfNeeded();
+      _stopWaveIfNeeded();
     }
-    final bounce = !_expanded && player.isPlaying
-        ? Tween<double>(begin: -0, end: -6)
-            .animate(CurvedAnimation(parent: _bounce, curve: Curves.easeInOut))
-        : const AlwaysStoppedAnimation<double>(0);
 
-    return AnimatedBuilder(
-      animation: bounce,
-      builder: (context, _) {
-        final center = _center + Offset(0, bounce.value);
-        return Stack(
-          children: [
-            if (_expanded)
-              _buildBar(context, player, size, center)
-            else
-              _buildBall(context, player, center),
-          ],
-        );
-      },
+    // 展开时全屏监听指针滑动（translucent：不拦截下层页面操作），
+    // 任意位置滑动超过阈值 → 自动收起回球
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: _expanded ? (_) => _moveAccum = 0 : null,
+      onPointerMove: _expanded
+          ? (d) {
+              _moveAccum += d.delta.dx.abs() + d.delta.dy.abs();
+              if (_moveAccum > 28) {
+                _moveAccum = 0;
+                setState(() => _expanded = false);
+              }
+            }
+          : null,
+      child: Stack(
+        children: [
+          if (_expanded)
+            _buildBar(context, player, size)
+          else
+            _buildBall(context, player),
+        ],
+      ),
     );
   }
 
-  void _stopBounceIfNeeded() {
-    if (_bounce.isAnimating) _bounce.stop();
+  void _stopWaveIfNeeded() {
+    if (_wave.isAnimating) _wave.stop();
+  }
+
+  /// 解析书籍封面：书架自定义本地封面 > 本地路径 coverUrl > 网络 coverUrl > 书架网络封面。
+  /// 网盘书的 Book.coverUrl 常为空，但用户在书架设置的自定义封面存在
+  /// BookshelfBook.localCoverPath 上，需回查书架。返回 null = 无封面。
+  Widget? _coverWidget(
+    Book? book, {
+    required double width,
+    required double height,
+    int? decodeWidth,
+  }) {
+    if (book == null) return null;
+    final shelfBook =
+        context.read<BookshelfRepository>().getById(book.id);
+    var localPath = shelfBook?.localCoverPath;
+    var url = book.coverUrl ?? shelfBook?.coverUrl;
+    if ((localPath == null || localPath.isEmpty) &&
+        url != null &&
+        url.startsWith('/')) {
+      // 旧数据约定：以 / 开头的 coverUrl 是本地文件路径
+      localPath = url;
+      url = null;
+    }
+    if (localPath != null && localPath.isNotEmpty) {
+      return Image.file(
+        File(localPath),
+        fit: BoxFit.cover,
+        width: width,
+        height: height,
+        cacheWidth: decodeWidth, // 只解码显示所需尺寸，省内存
+        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+      );
+    }
+    if (url != null && url.isNotEmpty) {
+      return CachedNetworkImage(
+        imageUrl: url,
+        fit: BoxFit.cover,
+        width: width,
+        height: height,
+        memCacheWidth: decodeWidth,
+        errorWidget: (_, __, ___) => const SizedBox.shrink(),
+      );
+    }
+    return null;
   }
 
   /// 收起状态的悬浮球（可拖到任意位置）
-  Widget _buildBall(BuildContext context, AudioPlayerService player, Offset center) {
+  Widget _buildBall(BuildContext context, AudioPlayerService player) {
     final scheme = Theme.of(context).colorScheme;
+    final cover = _coverWidget(player.currentBook,
+        width: ballSize, height: ballSize, decodeWidth: (ballSize * 2).round());
     return Positioned(
-      left: center.dx - ballSize / 2,
-      top: center.dy - ballSize / 2,
+      left: _center.dx - ballSize / 2,
+      top: _center.dy - ballSize / 2,
       child: GestureDetector(
         onPanStart: (_) => _dragging = true,
         onPanUpdate: (d) {
@@ -181,13 +242,9 @@ class _FloatingPlayerBallState extends State<FloatingPlayerBall>
           child: Stack(
             alignment: Alignment.center,
             children: [
-              _ballCover(player.currentBook),
+              if (cover != null) ClipOval(child: cover),
               if (player.isPlaying)
-                Icon(
-                  Icons.graphic_eq_rounded,
-                  color: scheme.onPrimary.withValues(alpha: 0.95),
-                  size: 22,
-                )
+                _waveOverlay(scheme, overCover: cover != null)
               else
                 Icon(
                   Icons.play_arrow_rounded,
@@ -201,24 +258,46 @@ class _FloatingPlayerBallState extends State<FloatingPlayerBall>
     );
   }
 
-  Widget _ballCover(Book? book) {
-    if (book?.coverUrl == null) return const SizedBox.shrink();
-    return ClipOval(
-      child: CachedNetworkImage(
-        imageUrl: book!.coverUrl!,
-        fit: BoxFit.cover,
-        width: ballSize,
-        height: ballSize,
-        memCacheWidth: (ballSize * 2).round(), // 只解码显示所需尺寸，省内存
-        errorWidget: (_, __, ___) => const SizedBox.shrink(),
+  /// 球内声波条：4 根竖条按正弦相位差起伏（球本体不位移）。
+  /// 有封面时垫一层半透明暗色保证白色声波可读。
+  Widget _waveOverlay(ColorScheme scheme, {required bool overCover}) {
+    final barColor = scheme.onPrimary.withValues(alpha: 0.95);
+    return Container(
+      width: ballSize,
+      height: ballSize,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: overCover ? Colors.black.withValues(alpha: 0.45) : null,
+      ),
+      child: AnimatedBuilder(
+        animation: _wave,
+        builder: (context, _) {
+          final t = _wave.value * 2 * math.pi;
+          return Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < 4; i++) ...[
+                if (i > 0) const SizedBox(width: 2.5),
+                Container(
+                  width: 3,
+                  height: 7 + 9 * (0.5 + 0.5 * math.sin(t + i * math.pi / 2)),
+                  decoration: BoxDecoration(
+                    color: barColor,
+                    borderRadius: BorderRadius.circular(1.5),
+                  ),
+                ),
+              ],
+            ],
+          );
+        },
       ),
     );
   }
 
   /// 展开状态：从球的位置弹出小横条（左信息 + 右功能键），不遮罩不挡下层操作。
-  /// 点击横条主体（信息区/封面）→ 进入播放页；点球位置的小圆点 → 收起。
-  Widget _buildBar(
-      BuildContext context, AudioPlayerService player, Size size, Offset center) {
+  /// 点击横条左半（信息区/封面）→ 进入播放页；点收起键或任意位置滑动 → 回球。
+  Widget _buildBar(BuildContext context, AudioPlayerService player, Size size) {
     final scheme = Theme.of(context).colorScheme;
     final book = player.currentBook!;
     final chapter = player.currentChapter;
@@ -227,8 +306,8 @@ class _FloatingPlayerBallState extends State<FloatingPlayerBall>
 
     // 横条位置：以球为锚点，整体夹在屏内
     final double barLeft =
-        (center.dx - ballSize / 2 - 4).clamp(0.0, (size.width - barWidth).clamp(0.0, double.infinity));
-    var barTop = center.dy - barHeight / 2;
+        (_center.dx - ballSize / 2 - 4).clamp(0.0, (size.width - barWidth).clamp(0.0, double.infinity));
+    var barTop = _center.dy - barHeight / 2;
     barTop = barTop.clamp(8.0, (size.height - barHeight - 16).clamp(8.0, double.infinity));
 
     return Stack(
@@ -245,10 +324,10 @@ class _FloatingPlayerBallState extends State<FloatingPlayerBall>
               return Transform.scale(
                 scale: 0.55 + 0.45 * t,
                 alignment: Alignment(
-                  ((center.dx - (barLeft + barWidth / 2)) /
+                  ((_center.dx - (barLeft + barWidth / 2)) /
                           (barWidth / 2))
                       .clamp(-1.0, 1.0),
-                  ((center.dy - (barTop + barHeight / 2)) /
+                  ((_center.dy - (barTop + barHeight / 2)) /
                           (barHeight / 2))
                       .clamp(-1.0, 1.0),
                 ),
@@ -285,16 +364,16 @@ class _FloatingPlayerBallState extends State<FloatingPlayerBall>
                             child: SizedBox(
                               width: 44,
                               height: 44,
-                              child: book.coverUrl != null
-                                  ? CachedNetworkImage(
-                                      imageUrl: book.coverUrl!,
-                                      fit: BoxFit.cover,
-                                      memCacheWidth: 88,
-                                      errorWidget: (_, __, ___) =>
-                                          const SizedBox.shrink(),
-                                    )
-                                  : Icon(Icons.auto_stories_rounded,
-                                      color: scheme.primary),
+                              child: _coverWidget(book,
+                                      width: 44,
+                                      height: 44,
+                                      decodeWidth: 88) ??
+                                  Container(
+                                    color:
+                                        scheme.primaryContainer.withValues(alpha: 0.6),
+                                    child: Icon(Icons.auto_stories_rounded,
+                                        color: scheme.primary),
+                                  ),
                             ),
                           ),
                           const SizedBox(width: 8),

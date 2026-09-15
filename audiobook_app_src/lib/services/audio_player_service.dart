@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleListener;
 import 'package:just_audio/just_audio.dart';
 import 'package:just_audio_background/just_audio_background.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -85,6 +86,14 @@ class AudioPlayerService extends ChangeNotifier {
   /// Error message from the last failed load, for UI display.
   String? lastError;
 
+  /// 自动连播失败重试：后台切章失败（CDN 直链过期 / 系统限制后台网络）时
+  /// 静默退避重试，避免整本书在后台断播。
+  int _advanceRetries = 0;
+  Timer? _advanceRetryTimer;
+
+  /// 回前台补试：后台期间重试全部失败时，用户回到前台再自动重试一次。
+  AppLifecycleListener? _lifecycleListener;
+
   AudioPlayerService(this._progressRepo) {
     // Listen to playback events
     _player.playbackEventStream.listen(_onPlaybackEvent);
@@ -104,6 +113,15 @@ class AudioPlayerService extends ChangeNotifier {
       notifyListeners();
     });
     _player.durationStream.listen((_) => notifyListeners());
+    // 后台连播失败补试：回到前台时若仍处于失败状态，自动重试当前章节
+    _lifecycleListener = AppLifecycleListener(
+      onResume: () {
+        if (lastError != null && _currentBook != null) {
+          _advanceRetries = 0;
+          _scheduleAdvanceRetry();
+        }
+      },
+    );
   }
 
   // --- Getters ---
@@ -154,6 +172,9 @@ class AudioPlayerService extends ChangeNotifier {
   }) async {
     // 通知栏播放控制依赖通知权限（Android 13+），开始播放时申请时机最准
     await _ensureNotificationPermission();
+    // 旧的重试任务不再适用（可能指向旧书的章节）
+    _advanceRetryTimer?.cancel();
+    _advanceRetries = 0;
     // 空章节的书不切换当前书（避免 hasBook=true 但章节为空的半初始化状态，
     // 那会导致目录面板 clamp(0, -1) 崩溃）
     if (book.chapters.isEmpty) {
@@ -178,8 +199,12 @@ class AudioPlayerService extends ChangeNotifier {
     _currentChapterIndex = index;
     await _startNewSession();
     await _loadCurrentChapter();
-    await _seekToStart(Duration.zero);
-    await _player.play();
+    if (lastError != null) {
+      _scheduleAdvanceRetry();
+    } else {
+      await _seekToStart(Duration.zero);
+      await _player.play();
+    }
     notifyListeners();
   }
 
@@ -300,14 +325,28 @@ class AudioPlayerService extends ChangeNotifier {
       // Cloud drive chapter: fetch real-time stream URL with headers.
       try {
         ResolvedStream resolved;
-        // 预加载缓存命中：直接用已解析的直链（切章零等待）
+        // 预加载缓存命中：直接用已解析的直链（切章零等待）。
+        // 直链带签名有效期，剩余不足 2 分钟视为过期（后台长时间播放后常见），重新解析。
         final cached = chapter.fileId != null
             ? _resolvedCache[chapter.fileId!]
             : null;
-        if (cached != null) {
+        final cachedRemaining =
+            cached == null ? null : _urlRemainingSeconds(cached.url);
+        if (cached != null &&
+            (cachedRemaining == null || cachedRemaining >= 120)) {
           resolved = cached;
           debugPrint('[Player] 使用预加载缓存: ${chapter.title}');
-        } else if (streamUrlResolver != null) {
+        } else {
+          if (cached != null) {
+            _resolvedCache.remove(chapter.fileId!);
+            debugPrint('[Player] 预加载直链即将过期，重新解析: ${chapter.title}');
+          }
+          if (streamUrlResolver == null) {
+            lastError = '未配置网盘服务';
+            debugPrint('[Player] $lastError');
+            notifyListeners();
+            return;
+          }
           final result = await streamUrlResolver!(chapter);
           if (result == null) {
             lastError = '无法获取播放链接';
@@ -316,11 +355,6 @@ class AudioPlayerService extends ChangeNotifier {
             return;
           }
           resolved = result;
-        } else {
-          lastError = '未配置网盘服务';
-          debugPrint('[Player] $lastError');
-          notifyListeners();
-          return;
         }
         debugPrint('[Player] 解析到流地址: ${resolved.url.substring(0, resolved.url.length.clamp(0, 120))}...');
         loadedDuration = await _player.setAudioSource(
@@ -387,22 +421,35 @@ class AudioPlayerService extends ChangeNotifier {
 
   Future<void> nextChapter() async {
     if (_currentChapterIndex < _chapters.length - 1) {
+      _advanceRetryTimer?.cancel();
+      _advanceRetries = 0;
       _switchingChapter = true;
       _currentChapterIndex++;
       await _loadCurrentChapter();
-      await _seekToStart(Duration.zero);
-      await _player.play();
+      if (lastError != null) {
+        // 后台连播失败最常见：CDN 直链过期 / 系统限制后台网络 → 静默退避重试
+        _scheduleAdvanceRetry();
+      } else {
+        await _seekToStart(Duration.zero);
+        await _player.play();
+      }
       notifyListeners();
     }
   }
 
   Future<void> previousChapter() async {
     if (_currentChapterIndex > 0) {
+      _advanceRetryTimer?.cancel();
+      _advanceRetries = 0;
       _switchingChapter = true;
       _currentChapterIndex--;
       await _loadCurrentChapter();
-      await _seekToStart(Duration.zero);
-      await _player.play();
+      if (lastError != null) {
+        _scheduleAdvanceRetry();
+      } else {
+        await _seekToStart(Duration.zero);
+        await _player.play();
+      }
       notifyListeners();
     }
   }
@@ -505,6 +552,49 @@ class AudioPlayerService extends ChangeNotifier {
     );
   }
 
+  /// 自动连播失败重试：后台切章时 CDN 直链可能已过期、或系统限制后台网络，
+  /// 界面上没有重试入口，这里按退避间隔（3/6/9 秒）静默重试最多 3 次。
+  /// 每次重试前清空预加载缓存，强制重新解析新直链。
+  void _scheduleAdvanceRetry() {
+    if (_currentBook == null || _currentChapterIndex >= _chapters.length) {
+      return;
+    }
+    if (_advanceRetries >= 3) return;
+    _advanceRetries++;
+    _advanceRetryTimer?.cancel();
+    _advanceRetryTimer = Timer(Duration(seconds: 3 * _advanceRetries), () async {
+      // 期间用户已手动恢复（换书/成功播放）→ 放弃本次重试
+      if (_currentBook == null || lastError == null) return;
+      // 旧直链（含预加载缓存）大概率已失效，丢弃重新解析
+      _resolvedCache.clear();
+      _preloadedForFileId = null;
+      await _loadCurrentChapter();
+      if (lastError == null) {
+        _advanceRetries = 0;
+        await _seekToStart(Duration.zero);
+        await _player.play();
+      } else {
+        _scheduleAdvanceRetry();
+      }
+      notifyListeners();
+    });
+  }
+
+  /// 直链 URL 的剩余有效秒数（解析查询参数里的 Expires / x-oss-expires）。
+  /// 解析不出返回 null（视为长期有效）。
+  int? _urlRemainingSeconds(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return null;
+    for (final key in const ['Expires', 'expires', 'x-oss-expires']) {
+      final raw = uri.queryParameters[key];
+      if (raw == null) continue;
+      final expireAt = int.tryParse(raw);
+      if (expireAt == null) continue;
+      return expireAt - DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    }
+    return null;
+  }
+
   /// 把零头时长记账并落盘（随进度保存一起触发）。
   Future<void> _flushStats() async {
     final repo = statsRepo;
@@ -563,6 +653,7 @@ class AudioPlayerService extends ChangeNotifier {
   /// Stop playback and release resources.
   Future<void> stop() async {
     await _saveProgress();
+    _advanceRetryTimer?.cancel();
     await _player.stop();
     _currentBook = null;
     _chapters = [];
@@ -573,6 +664,8 @@ class AudioPlayerService extends ChangeNotifier {
   void dispose() {
     _sleepTimer?.cancel();
     _progressSaveTimer?.cancel();
+    _advanceRetryTimer?.cancel();
+    _lifecycleListener?.dispose();
     _player.dispose();
     super.dispose();
   }
