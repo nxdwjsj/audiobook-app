@@ -34,14 +34,38 @@ class WebViewFetcher {
   /// 一次导航最多容忍几次重载（挑战 + 站点自身的跳转），防止死循环。
   static const int _maxLoads = 4;
 
-  /// 空闲多久后释放 WebView（省内存；Cookie 已由系统 CookieManager 保管）。
-  static const Duration _idleTimeout = Duration(minutes: 5);
+  /// 空闲多久后释放 WebView（省内存；Cookie 已由系统 CookieManager 保管，
+  /// 挑战 Cookie 还在，下次导航通常不用再过一遍挑战）。
+  /// 留得比听一章的时间长一些，避免听书途中切章又重新导航。
+  static const Duration _idleTimeout = Duration(minutes: 15);
 
   HeadlessInAppWebView? _webView;
   InAppWebViewController? _controller;
   Completer<void>? _starting;
   Future<void> _tail = Future.value();
   Timer? _idleTimer;
+
+  /// 是否已经导航加载过真实页面。
+  /// 没导航过时页面是 about:blank（origin 为 null），直接 fetch 同源地址会被
+  /// CORS 拦；而且挑战 Cookie 也只有导航过一次才在会话里。
+  bool _pageLoaded = false;
+
+  /// 当前会话页面所在域名（页面内 fetch 只能同域用）。
+  String _loadedHost = '';
+
+  /// 会话是否可用（已加载过站点页面）——调用方可据此直接走页面内 fetch。
+  bool get hasLoadedPage => _pageLoaded;
+
+  /// 会话页面是否与 [url] 同域。不同域时页面内 fetch 会被 CORS 拦，
+  /// 必须先导航过去（返回 false 让调用方走导航）。
+  bool sessionMatches(String url) {
+    if (!_pageLoaded) return false;
+    final host = Uri.tryParse(url)?.host ?? '';
+    return host.isNotEmpty && host == _loadedHost;
+  }
+
+  /// 轮询「页面内 fetch 是否完成」的间隔。
+  static const Duration _pollInterval = Duration(milliseconds: 50);
 
   void Function(InAppWebViewController, WebUri?)? _onStop;
   void Function(String)? _onError;
@@ -151,7 +175,10 @@ class WebViewFetcher {
 
       try {
         await controller.loadUrl(urlRequest: URLRequest(url: WebUri(url)));
-        return await done.future;
+        final html = await done.future;
+        _pageLoaded = true;
+        _loadedHost = Uri.tryParse(url)?.host ?? '';
+        return html;
       } finally {
         timer.cancel();
         _onStop = null;
@@ -187,7 +214,7 @@ window.$key = null;
 
       final deadline = DateTime.now().add(timeout);
       while (DateTime.now().isBefore(deadline)) {
-        await Future.delayed(const Duration(milliseconds: 120));
+        await Future.delayed(_pollInterval);
         final raw = await controller.evaluateJavascript(
           source: 'window.$key ? JSON.stringify(window.$key) : ""',
         );
@@ -198,6 +225,66 @@ window.$key = null;
         throw StateError('页面内 fetch 失败：${result['body']}');
       }
       throw TimeoutException('页面内 fetch 超时：$url');
+    });
+  }
+
+  /// 一次抓取多个同源页面（页面内分批并发）。
+  ///
+  /// 比逐个 [fetchText] 快得多：一次 Dart↔JS 往返就能拿回一批页面，
+  /// 适合「同一个模板翻几十页」的目录抓取。单页失败返回空串，不影响其它页。
+  Future<List<String>> fetchTextMany(
+    List<String> urls, {
+    int batchSize = 6,
+    Duration timeout = const Duration(seconds: 60),
+  }) {
+    if (urls.isEmpty) return Future.value(const <String>[]);
+    return _serialize(() async {
+      final controller = await _ensure();
+      final key = '__tt_many_${DateTime.now().microsecondsSinceEpoch}';
+      await controller.evaluateJavascript(source: '''
+window.$key = null;
+(function () {
+  var urls = ${jsonEncode(urls)};
+  var out = [];
+  var size = $batchSize;
+  function step(i) {
+    if (i >= urls.length) {
+      window.$key = { ok: true, body: JSON.stringify(out) };
+      return;
+    }
+    var chunk = urls.slice(i, i + size);
+    Promise.all(chunk.map(function (u) {
+      return fetch(u, { credentials: 'include' })
+        .then(function (r) { return r.text(); })
+        .catch(function () { return ''; });
+    })).then(function (part) {
+      out = out.concat(part);
+      step(i + size);
+    });
+  }
+  step(0);
+})();
+''');
+
+      final deadline = DateTime.now().add(timeout);
+      while (DateTime.now().isBefore(deadline)) {
+        await Future.delayed(_pollInterval);
+        final raw = await controller.evaluateJavascript(
+          source: 'window.$key ? JSON.stringify(window.$key) : ""',
+        );
+        final result = _tryDecodeMap(_unwrapJsString(raw));
+        if (result == null) continue;
+        await controller.evaluateJavascript(source: 'window.$key = null;');
+        if (result['ok'] != true) {
+          throw StateError('页面内批量 fetch 失败：${result['body']}');
+        }
+        final decoded = jsonDecode(result['body']?.toString() ?? '');
+        if (decoded is List) {
+          return [for (final item in decoded) item?.toString() ?? ''];
+        }
+        return const <String>[];
+      }
+      throw TimeoutException('页面内批量 fetch 超时（${urls.length} 页）');
     });
   }
 
@@ -257,6 +344,8 @@ window.$key = null;
     _starting = null;
     _onStop = null;
     _onError = null;
+    _pageLoaded = false;
+    _loadedHost = '';
     if (webView != null) {
       try {
         await webView.dispose();

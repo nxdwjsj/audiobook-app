@@ -590,7 +590,7 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
             if (_onlineHits.isEmpty)
               _emptyHint('在线书源没有搜到相关有声书')
             else
-              ..._onlineHits.map(_buildOnlineCard),
+              ..._groupedOnlineSections(),
         ],
       ],
     );
@@ -664,6 +664,88 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
         style: Theme.of(context).textTheme.bodySmall?.copyWith(
               color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
+      ),
+    );
+  }
+
+  /// 在线结果按书源分栏：每个源一个小标题，可单独收起。
+  List<Widget> _groupedOnlineSections() {
+    final sources = context.read<BookSourceRepository>().all;
+    final grouped = <String, List<OnlineBookHit>>{};
+    final order = <String>[];
+    for (final hit in _onlineHits) {
+      grouped.putIfAbsent(hit.source, () {
+        order.add(hit.source);
+        return <OnlineBookHit>[];
+      }).add(hit);
+    }
+    // 按书源列表里的顺序排（稳定），不在列表里的排后面
+    final ids = [for (final s in sources) s.id];
+    order.sort((a, b) {
+      final ia = ids.indexOf(a);
+      final ib = ids.indexOf(b);
+      return (ia < 0 ? 1 << 20 : ia).compareTo(ib < 0 ? 1 << 20 : ib);
+    });
+
+    final widgets = <Widget>[];
+    for (final id in order) {
+      final hits = grouped[id]!;
+      final name = sources.where((s) => s.id == id).firstOrNull?.name ?? id;
+      final key = 'online:$id';
+      final collapsed = _collapsed.contains(key);
+      widgets.add(_subHeader(key, name, hits.length, collapsed));
+      if (!collapsed) widgets.addAll(hits.map(_buildOnlineCard));
+    }
+    return widgets;
+  }
+
+  /// 书源级小标题（比一级分区标题轻一号，同样点击收起/展开）。
+  Widget _subHeader(String key, String label, int count, bool collapsed) {
+    final scheme = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: () => setState(() {
+        if (collapsed) {
+          _collapsed.remove(key);
+        } else {
+          _collapsed.add(key);
+        }
+      }),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(22, 10, 16, 2),
+        child: Row(
+          children: [
+            Container(
+              width: 3,
+              height: 13,
+              decoration: BoxDecoration(
+                color: scheme.primary.withValues(alpha: 0.6),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              '$count',
+              style: TextStyle(fontSize: 12, color: scheme.outline),
+            ),
+            const Spacer(),
+            Icon(
+              collapsed
+                  ? Icons.keyboard_arrow_down_rounded
+                  : Icons.keyboard_arrow_up_rounded,
+              size: 18,
+              color: scheme.outline,
+            ),
+          ],
+        ),
       ),
     );
   }
