@@ -10,10 +10,10 @@
 一个 Flutter 有声书播放器（主用 Android 真机），核心能力是**直接播放网盘里的音频文件夹**，把网盘文件夹当作一本书来管理（目录、进度、续播、历史）。
 
 - 应用名：`audiobook_app`，显示名「聆云」
-- 版本：`1.0.7+8`
+- 版本：`1.0.8+9`
 - 平台目录：`android/`（主力）、`ios/`、`web/`（未验证）
-- **下载安装**：[Releases · 最新版](https://github.com/nxdwjsj/audiobook-app/releases/latest) → 点 `lingyun-v1.0.7.apk` 直接下载安装（release 构建、debug 签名、通用包；约 56MB）
-- 仓库内另有副本：`releases/lingyun-v1.0.7.apk`
+- **下载安装**：[Releases · 最新版](https://github.com/nxdwjsj/audiobook-app/releases/latest) → 点 `lingyun-v1.0.8.apk` 直接下载安装（release 构建、debug 签名、**仅 arm64**；约 20.5MB）
+- 仓库内另有副本：`releases/lingyun-v1.0.8.apk`
 
 **技术栈**
 
@@ -42,6 +42,9 @@ flutter test                                           # test/models_test.dart
 dart run build_runner build --delete-conflicting-outputs   # 改动 Hive 模型后必须执行
 flutter build apk --debug                              # 产出 build\app\outputs\flutter-apk\app-debug.apk
 adb install -r build\app\outputs\flutter-apk\app-debug.apk
+
+# release 包（仅 arm64 单架构，约 20.5MB；不加 --target-platform 会打全架构 56MB）
+flutter build apk --release --target-platform android-arm64
 ```
 
 **抓真机日志（推荐方式）**
@@ -304,6 +307,11 @@ box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `li
 | 书架封面播放按钮点击穿透进详情页 | 内层 `GestureDetector` 默认 `deferToChild`，tap 被外层 `InkWell` 赢走 → 设 `behavior: HitTestBehavior.opaque` 让内层赢得手势竞技场 |
 | 悬浮面板展开只露出一条/出屏 | 面板沿用球的贴边 `left` 定位，球在右侧时面板向右伸出屏幕 → 面板单独定位：与球同侧对齐、宽度夹在屏内，球太低时翻到球上方 |
 | 浮动按钮拖动卡顿 | 拖动的 `setState` 落在页面级 State 上，每帧重建整页（含 300 行目录）→ 抽成独立 `StatefulWidget`，拖动只重绘自身 |
+| 空列表播放必崩（`ArgumentError`） | `num.clamp(0, length - 1)` 在列表为空时变成 `clamp(0, -1)`，Dart 要求下界 ≤ 上界 → **空集合必须先短路返回**，不要让 clamp 见到空列表 |
+| `list..sort()..take(n)` 裁剪不生效 | 级联操作里 `take()` 的**返回值被丢弃**，list 本身没变 → 必须显式 `return list.take(n).toList()` |
+| 懒加载列表（`ListView.builder`）定位失效 | `GlobalKey.currentContext` 只对**已构建**的行非空，目标行还在视口外时 `ensureVisible` 拿不到 context → 两段式：先按行高估算 `jumpTo` 把目标行搬进构建区，下一帧再 `ensureVisible` 精修（带重试上限防死循环） |
+| 网盘目录快速切换时"闪回旧目录" | 异步响应乱序：先发的慢响应后到，覆盖了新目录 → 加自增请求序号 `_loadSeq`，响应到达时序号不符即丢弃 |
+| gradle `splits.abi` 与 Flutter 构建冲突 | Flutter Gradle 插件按 `--target-platform` 设 ndk abiFilters，再在 `build.gradle.kts` 加 `splits` 会报 conflicting configuration → 减包体直接用 `flutter build apk --release --target-platform android-arm64`，**不要**改 splits |
 
 ---
 
