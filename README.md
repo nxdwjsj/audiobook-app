@@ -10,10 +10,11 @@
 一个 Flutter 有声书播放器（主用 Android 真机），核心能力是**直接播放网盘里的音频文件夹**，把网盘文件夹当作一本书来管理（目录、进度、续播、历史）。
 
 - 应用名：`audiobook_app`，显示名「聆云」
-- 版本：`1.0.9+10`
-- 平台目录：`android/`（主力）、`ios/`、`web/`（未验证）
-- **下载安装**：[Releases · 最新版](https://github.com/nxdwjsj/audiobook-app/releases/latest) → 点 `lingyun-v1.0.9.apk` 直接下载安装（release 构建、debug 签名、**仅 arm64**；约 20.5MB）
-- 仓库内另有副本：`releases/lingyun-v1.0.9.apk`
+- 版本：`1.1.1+21`（与 `pubspec.yaml` 一致）
+- 平台目录：仅 `android/`（iOS 与 Web 平台目录已在 1.1.0 移除，不再维护）
+- **下载安装**：[Releases · 最新版](https://github.com/nxdwjsj/audiobook-app/releases/latest) → 下载对应的 APK 安装（release 构建、debug 签名、**仅 arm64**）
+- 仓库内副本：`releases/`（本地构建产物目录）
+- ⚠️ 仍是用 **debug 签名**的演示包：更换正式签名会导致无法覆盖安装、卸载即丢数据，故必须先有「数据导出/导入」能力才能动（产物命名统一见优化方案 MAINT-06）
 
 **技术栈**
 
@@ -24,7 +25,7 @@
 | 本地存储 | `hive` / `hive_flutter` / `path_provider` |
 | 状态管理 | `provider` |
 | 选文件 | `file_picker` |
-| 其他 | `cached_network_image`、`url_launcher`、`crypto`、`encrypt`、`html`、`intl` |
+| 其他 | `cached_network_image`、`url_launcher`、`html`、`permission_handler`、`flutter_inappwebview`（`encrypt` 保留未用，留给后续 Hive 加密） |
 | 代码生成 | `build_runner` + `hive_generator` |
 
 **开发环境（本机实测）**：Flutter `3.47.2` stable / Dart `3.13.2`（Windows）。
@@ -230,8 +231,10 @@ box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `li
   播放页全局唯一、
   **跳过片头/片尾**（播放页右上角设置秒数，**每本书独立配置**，存 `app_config` 的
   `skip_intro_<bookId>` / `skip_outro_<bookId>`；章节本身过短时不跳，避免连跳整本书）
-- **通知栏 / 锁屏播放控制**：`just_audio_background`——音频源带 `MediaItem` tag
-  （书名 / 章节名 / 封面），通知栏显示当前章节与播放进度，支持播放暂停、拖动进度、
+- **通知栏 / 锁屏播放控制**：`audio_service`（**不用** `just_audio_background`——它在
+  Android 16 上 MediaSession 状态无法更新、通知栏永远不出现）。由 `AudioPlayerService`
+  内部持 `AppAudioHandler`，把 `MediaItem`（书名 / 章节名 / 封面）与 `PlaybackState`
+  手动推给 MediaSession，通知栏显示当前章节与播放进度，支持播放暂停、拖动进度、
   切上一/下一章（单源模式下切章按钮由 App 内控制）；后台播放靠前台服务维持，
   `MainActivity` 必须继承 `AudioServiceActivity`，Android 13+ 需 `POST_NOTIFICATIONS` 运行时授权
 - **历史**：**会话制**——手动点播新建一条记录，自动连播只更新当前记录；

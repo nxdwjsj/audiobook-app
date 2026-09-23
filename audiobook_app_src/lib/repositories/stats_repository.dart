@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../services/storage_service.dart';
@@ -21,13 +23,33 @@ class StatsRepository extends ChangeNotifier {
   static const String _dailyKey = 'daily';
   static const String _booksKey = 'books';
 
+  /// 通知节流窗口的默认值（PERF-02）。见 [notifyThrottle]。
+  static const Duration defaultNotifyThrottle = Duration(seconds: 30);
+
+  /// 通知节流窗口。
+  ///
+  /// 播放期间播放器每累计约 10 秒就会 `addSeconds` 一次，而统计页/书架页
+  /// 都 `context.watch` 本仓储 —— 原先每次记账都 `notifyListeners()`，
+  /// 5 分钟播放会造成约 30 次整页重建。这里把 addSeconds 与 flush 的通知
+  /// 合并，保证任意这么长的窗口内最多通知一次（重建次数下降约 2/3）。
+  final Duration notifyThrottle;
+
   final StorageService _storage;
 
   Map<String, int> _dailySeconds = {};
   Map<String, Map<String, dynamic>> _books = {};
   bool _dirty = false;
 
-  StatsRepository(this._storage) {
+  /// 节流的尾部通知定时器（保证最终状态一定会刷出去）。
+  Timer? _notifyTimer;
+
+  /// 上次通知时间；null 表示还没通知过。
+  DateTime? _lastNotifyAt;
+
+  StatsRepository(
+    this._storage, {
+    this.notifyThrottle = defaultNotifyThrottle,
+  }) {
     _load();
   }
 
@@ -94,7 +116,8 @@ class StatsRepository extends ChangeNotifier {
     }
 
     _dirty = true;
-    notifyListeners();
+    // 不再直接 notifyListeners()：改走节流，避免播放期间整页高频重建
+    _notifyThrottled();
   }
 
   /// 落盘（播放器定时调用，避免频繁写 Hive）。
@@ -107,6 +130,39 @@ class StatsRepository extends ChangeNotifier {
     } catch (e) {
       _dirty = true;
       debugPrint('[Stats] 保存统计失败: $e');
+      return;
     }
+    // 落盘成功后统一通知（同样受节流约束）
+    _notifyThrottled();
+  }
+
+  /// 统一通知入口（节流）：
+  /// 距上次通知已满 [notifyThrottle] → 立即通知；否则安排一次尾部通知，
+  /// 确保最后一个数据点最终一定会反映到 UI 上。
+  void _notifyThrottled() {
+    final now = DateTime.now();
+    final last = _lastNotifyAt;
+    if (last == null || now.difference(last) >= notifyThrottle) {
+      _notifyTimer?.cancel();
+      _notifyTimer = null;
+      _lastNotifyAt = now;
+      notifyListeners();
+      return;
+    }
+    if (_notifyTimer?.isActive ?? false) return;
+    _notifyTimer = Timer(notifyThrottle - now.difference(last), () {
+      _notifyTimer = null;
+      _lastNotifyAt = DateTime.now();
+      notifyListeners();
+    });
+  }
+
+  @override
+  void dispose() {
+    // 尾部定时器必须在 dispose 前取消：否则会在仓储销毁后触发
+    // notifyListeners()，抛 "A ChangeNotifier was used after being disposed"。
+    _notifyTimer?.cancel();
+    _notifyTimer = null;
+    super.dispose();
   }
 }

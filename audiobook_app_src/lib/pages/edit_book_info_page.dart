@@ -91,7 +91,9 @@ class _EditBookInfoPageState extends State<EditBookInfoPage> {
       driveDirFid: book.driveDirFid,
       isFromShare: book.isFromShare,
       shareUrl: book.shareUrl,
-      chapters: book.chapters,
+      // 刻意不传 chapters：本页只改元信息（封面/作者/简介）。传 null 表示
+      // 「本次不涉及章节」，repo 就不会重写 chapters box —— 这正是 PERF-01
+      // 消除写放大的关键（改封面不再重写上千条章节）。
       sortOrder: book.sortOrder,
       localCoverPath: _coverPath,
     ));

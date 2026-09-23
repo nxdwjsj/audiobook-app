@@ -127,6 +127,19 @@ class AudioPlayerService extends ChangeNotifier {
   /// Error message from the last failed load, for UI display.
   String? lastError;
 
+  /// 网盘登录态是否已失效（取流失败时判定）。
+  /// 为 true 时 [lastError] 会换成「登录已失效」的文案，UI 据此给出
+  /// 「去重新连接」入口，而不是让用户自己猜要不要重贴 Cookie。
+  bool _cloudAuthExpired = false;
+
+  /// 网盘登录态是否已失效。仅供 UI 读取。
+  bool get cloudAuthExpired => _cloudAuthExpired;
+
+  /// 判定网盘登录态是否失效的回调（由 main.dart 注入，读网盘服务的 authStatus）。
+  /// 取流失败时网盘服务已同步把 authStatus 置为 expired，这里直接读即可，
+  /// 不必去解析异常文本。
+  bool Function()? cloudAuthExpiredChecker;
+
   /// 正在自动重试（界面提示用）。
   bool retrying = false;
 
@@ -559,6 +572,7 @@ class AudioPlayerService extends ChangeNotifier {
     // 旧请求返回时不能覆盖新章节的就位状态（否则自动连播会失效）
     final targetIndex = _currentChapterIndex;
     lastError = null;
+    _cloudAuthExpired = false;
     // 注意：这里不要清 _switchingChapter。切章期间位置事件仍停在旧章节末尾，
     // 提前清掉会连锁触发再次跳章；该锁在落到新章节后由 _maybeSkipOutro 解除。
     debugPrint('[Player] 加载章节 ${_currentChapterIndex + 1}/${_chapters.length}: '
@@ -599,7 +613,12 @@ class AudioPlayerService extends ChangeNotifier {
           }
           final result = await streamUrlResolver!(chapter);
           if (result == null) {
-            lastError = '无法获取播放链接';
+            _refreshCloudAuthExpired();
+            // 只给一句「无法获取播放链接」的话，用户不知道要去重连网盘；
+            // 判定为登录失效时直接把可操作的文案递给 UI。
+            lastError = _cloudAuthExpired
+                ? '登录已失效，请重新连接网盘'
+                : '无法获取播放链接';
             debugPrint('[Player] $lastError');
             notifyListeners();
             return;
@@ -631,7 +650,10 @@ class AudioPlayerService extends ChangeNotifier {
         notifyListeners();
         return;
       } catch (e) {
-        lastError = '获取播放链接失败: $e';
+        _refreshCloudAuthExpired();
+        lastError = _cloudAuthExpired
+            ? '登录已失效，请重新连接网盘'
+            : '获取播放链接失败: $e';
         debugPrint('[Player] $lastError');
         notifyListeners();
         return;
@@ -847,9 +869,16 @@ class AudioPlayerService extends ChangeNotifier {
           ..[nextFileId] = resolved;
         debugPrint('[Player] 已预加载下一章: ${next.title}');
       }
-    } catch (_) {
-      // 预加载失败：切章时走正常解析
+    } catch (e) {
+      // 不再静默吞掉：登录态失效、直链接口报错通常最先在这里冒头，
+      // 用户下次反馈时 logcat 里要有据可查。不打断播放，切章时走正常解析。
+      debugPrint('[Player] 预加载下一章失败: ${next.title} → $e');
     }
+  }
+
+  /// 重新判定网盘登录态是否失效（取流失败后调用）。
+  void _refreshCloudAuthExpired() {
+    _cloudAuthExpired = cloudAuthExpiredChecker?.call() ?? false;
   }
 
   /// 按墙钟增量累计「真正在播放」的时长。

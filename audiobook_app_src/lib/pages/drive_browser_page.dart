@@ -7,6 +7,7 @@ import '../services/baidu_drive_service.dart';
 import '../services/quark_drive_service.dart';
 import '../services/audio_player_service.dart';
 import '../services/cloud_drive_service.dart';
+import '../services/drive_list_cache.dart';
 import '../repositories/bookshelf_repository.dart';
 import '../models/bookshelf_book.dart';
 import '../widgets/frosted_glass.dart';
@@ -62,6 +63,9 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
   /// 目录加载请求序号（竞态守卫：旧响应到达时被丢弃）。
   int _loadSeq = 0;
 
+  /// 目录列举缓存（PERF-03，TTL 60s）。全局实例以便跨页面复用。
+  final DriveListCache _listCache = DriveListCache.instance;
+
   /// 非空 = 当前展示的是分享解析结果（分享域文件，不能按自有盘导航进目录）。
   List<DriveItem>? _shareItems;
 
@@ -106,7 +110,33 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
     );
   }
 
-  Future<void> _loadFolder({String? path, String? dirFileId}) async {
+  /// 带缓存地列举目录（PERF-03）。
+  ///
+  /// [forceRefresh] 为 true 时先让该目录失效再拉取 —— 下拉刷新 / 点刷新 /
+  /// 失败重试都必须走这条路，否则用户会拿到过期列表还以为网盘没更新。
+  Future<List<DriveItem>> _listFolderCached(
+    CloudDriveService service, {
+    String path = '/',
+    String? dirFileId,
+    bool forceRefresh = false,
+  }) async {
+    final key = DriveListCache.keyFor(_selectedDrive, path, dirFileId);
+    if (forceRefresh) _listCache.invalidate(key);
+    final cached = _listCache.get(key);
+    if (cached != null) {
+      debugPrint('[DriveBrowser] 命中目录缓存: $path');
+      return cached;
+    }
+    final items = await service.listFolder(path: path, dirFileId: dirFileId);
+    _listCache.put(key, items);
+    return items;
+  }
+
+  Future<void> _loadFolder({
+    String? path,
+    String? dirFileId,
+    bool forceRefresh = false,
+  }) async {
     final targetPath = path ?? _currentPath;
     // 请求序号：快速连续导航时丢弃过期的旧响应（慢的旧请求后到会覆盖新目录）
     final seq = ++_loadSeq;
@@ -117,9 +147,11 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
 
     try {
       final service = _driveService;
-      final items = await service.listFolder(
+      final items = await _listFolderCached(
+        service,
         path: targetPath,
         dirFileId: dirFileId,
+        forceRefresh: forceRefresh,
       );
       if (mounted && seq == _loadSeq) {
         setState(() {
@@ -282,17 +314,31 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
   }) async {
     // 防御：异常深的目录结构直接放弃
     if (depth > 5) return const [];
-    final items = await service.listFolder(path: path, dirFileId: dirFileId);
+    final items = await _listFolderCached(
+      service,
+      path: path,
+      dirFileId: dirFileId,
+    );
     final audio = items.where((i) => i.isAudio && !i.isDir).toList();
-    for (final sub in items.where((i) => i.isDir)) {
-      final subPath =
-          path == '/' ? '/${sub.name}' : '$path/${sub.name}';
-      audio.addAll(await _collectAudioRecursively(
-        service,
-        subPath,
-        _selectedDrive == DriveType.quark ? sub.fileId : null,
-        depth: depth + 1,
-      ));
+    final subDirs = items.where((i) => i.isDir).toList();
+
+    // 同级并发（上限 4）：原来几十个子目录逐个串行 await，网络往返线性叠加；
+    // 分批并发后整体耗时约降到 1/4。顺序仍按原目录顺序拼接，结果不变。
+    const siblingConcurrency = 4;
+    for (var start = 0; start < subDirs.length; start += siblingConcurrency) {
+      final batch = subDirs.skip(start).take(siblingConcurrency);
+      final results = await Future.wait(batch.map((sub) {
+        final subPath = path == '/' ? '/${sub.name}' : '$path/${sub.name}';
+        return _collectAudioRecursively(
+          service,
+          subPath,
+          _selectedDrive == DriveType.quark ? sub.fileId : null,
+          depth: depth + 1,
+        );
+      }));
+      for (final r in results) {
+        audio.addAll(r);
+      }
     }
     return audio;
   }
@@ -414,7 +460,7 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
             IconButton(
               icon: const Icon(Icons.refresh_rounded),
               tooltip: '刷新',
-              onPressed: _loading ? null : () => _loadFolder(),
+              onPressed: _loading ? null : () => _loadFolder(forceRefresh: true),
             ),
           IconButton(
             icon: const Icon(Icons.settings_rounded),
@@ -693,7 +739,7 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
               Text('加载失败：$_error', textAlign: TextAlign.center),
               const SizedBox(height: 16),
               FilledButton.tonal(
-                onPressed: () => _loadFolder(),
+                onPressed: () => _loadFolder(forceRefresh: true),
                 child: const Text('重试'),
               ),
             ],
@@ -705,7 +751,7 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
     final items = _visibleItems;
     if (items.isEmpty) {
       return RefreshIndicator(
-        onRefresh: () => _loadFolder(),
+        onRefresh: () => _loadFolder(forceRefresh: true),
         child: ListView(
           children: [
             SizedBox(

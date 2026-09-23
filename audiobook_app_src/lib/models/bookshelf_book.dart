@@ -60,6 +60,13 @@ class BookshelfBook {
   /// Cached chapter list for drive books.
   /// When non-null, playback can be started directly without re-listing
   /// the drive folder (avoids unnecessary API calls on the shelf).
+  ///
+  /// **已迁移（PERF-01）**：新写入不再把章节内嵌到本记录，改存独立的
+  /// `chapters` box（见 `StorageService.chapters` / `BookshelfRepository.getChapters`）。
+  /// 该字段仅作为**旧数据的回落读取来源**保留，不做清理，
+  /// 因此老版本 App 仍能读到旧数据（回滚零成本）。
+  /// 新的序列化产物里不再包含 `chapters` 键。
+  @Deprecated('章节已拆到独立 chapters box，读取请用 BookshelfRepository.getChapters')
   @HiveField(9)
   final List<Chapter>? chapters;
 
@@ -91,6 +98,14 @@ class BookshelfBook {
     this.localCoverPath,
   }) : addedAt = addedAt ?? DateTime.now();
 
+  /// 序列化书记录。
+  ///
+  /// **不再输出 `chapters`**（PERF-01）：章节已拆到独立的 `chapters` box，
+  /// 由 `BookshelfRepository` 单独读写。这样改一次封面等元信息只需写这条
+  /// 约 300B 的记录，不必把上千条章节整段重新序列化。
+  ///
+  /// 注意：这是"新写入不带 chapters"，并不是"清理旧数据"——历史记录里
+  /// 内嵌的 `chapters` 键原样保留，[fromJson] 也仍然会读它，保证双读与回滚。
   Map<String, dynamic> toJson() => {
         'id': id,
         'title': title,
@@ -106,10 +121,34 @@ class BookshelfBook {
         'driveDirFid': driveDirFid,
         'isFromShare': isFromShare,
         'shareUrl': shareUrl,
-        'chapters': chapters?.map((c) => c.toJson()).toList(),
         'sortOrder': sortOrder,
         'localCoverPath': localCoverPath,
       };
+
+  /// 复制一份并替换章节（章节拆表后，`getById` 用它把独立 box 里的章节
+  /// 补回对象上，保持调用方行为不变）。
+  BookshelfBook withChapters(List<Chapter>? chapters) {
+    return BookshelfBook(
+      id: id,
+      title: title,
+      author: author,
+      coverUrl: coverUrl,
+      description: description,
+      chapterCount: chapterCount,
+      isLocal: isLocal,
+      localFilePath: localFilePath,
+      addedAt: addedAt,
+      driveType: driveType,
+      drivePath: drivePath,
+      driveDirFid: driveDirFid,
+      isFromShare: isFromShare,
+      shareUrl: shareUrl,
+      // ignore: deprecated_member_use_from_same_package
+      chapters: chapters,
+      sortOrder: sortOrder,
+      localCoverPath: localCoverPath,
+    );
+  }
 
   factory BookshelfBook.fromJson(Map<String, dynamic> json) {
     final driveTypeStr = json['driveType']?.toString();

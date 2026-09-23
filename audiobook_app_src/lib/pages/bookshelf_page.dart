@@ -7,7 +7,6 @@ import '../widgets/app_page_route.dart';
 import 'package:provider/provider.dart';
 import '../models/book.dart';
 import '../models/bookshelf_book.dart';
-import '../models/chapter.dart';
 import '../models/drive_item.dart';
 import '../repositories/bookshelf_repository.dart';
 import '../repositories/book_source_repository.dart';
@@ -436,7 +435,9 @@ class _BookshelfItemState extends State<_BookshelfItem> {
       if (context.mounted) context.pushPlayerPage();
       return;
     }
-    final chapters = book.chapters ?? const <Chapter>[];
+    // 章节已拆到独立 box（PERF-01）：getAll() 返回的书不含章节，这里按需取
+    // （命中内存 LRU，代价可忽略）。
+    final chapters = context.read<BookshelfRepository>().getChapters(book.id);
     if (chapters.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('这本书没有章节信息，请先进入详情页刷新')),

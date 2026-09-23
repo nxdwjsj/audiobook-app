@@ -13,7 +13,20 @@ class StorageService {
   static const String listenSessionsBox = 'listen_sessions';
   static const String listeningStatsBox = 'listening_stats';
 
+  /// 章节独立存储（PERF-01）：key = bookId，value = List<Map>（与旧内嵌结构一致）。
+  /// 拆出来的目的是消除写放大——改一次封面不再重写上千条章节。
+  static const String chaptersBox = 'chapters';
+
   static bool _hiveReady = false;
+
+  /// 仅测试用：纯 Dart 测试里不便走 [init]（依赖 Flutter binding 与
+  /// `Hive.initFlutter()`），由测试自行 `Hive.init` + `openBox` 后调用本方法放行。
+  @visibleForTesting
+  static void markReadyForTesting() => _hiveReady = true;
+
+  /// 仅测试用：撤销 [markReadyForTesting] 的效果，避免污染同一进程内的其他测试。
+  @visibleForTesting
+  static void resetReadyForTesting() => _hiveReady = false;
 
   static Future<void> init() async {
     debugPrint('StorageService: starting init...');
@@ -35,6 +48,7 @@ class StorageService {
     await Hive.openBox(configBox);
     await Hive.openBox(listenSessionsBox);
     await Hive.openBox(listeningStatsBox);
+    await Hive.openBox(chaptersBox);
     debugPrint('StorageService: all boxes opened');
     _hiveReady = true;
   }
@@ -53,6 +67,10 @@ class StorageService {
       _hiveReady ? Hive.box(listenSessionsBox) : _EmptyBox();
   Box<dynamic> get listeningStats =>
       _hiveReady ? Hive.box(listeningStatsBox) : _EmptyBox();
+
+  /// 章节独立存储（PERF-01）。未就绪时返回 [_EmptyBox]，读为 null、写被忽略。
+  Box<dynamic> get chapters =>
+      _hiveReady ? Hive.box(chaptersBox) : _EmptyBox();
 
   // --- Cloud drive credentials ---
 

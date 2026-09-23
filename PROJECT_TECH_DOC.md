@@ -1,7 +1,7 @@
 # 聆云（audiobook_app）项目技术文档
 
 > 项目路径：`D:\Project\TraeWorkspace\audiobook\audiobook_app_src`
-> 当前版本：`1.0.8+9`（发布 APK 仅 arm64，约 20.5MB）
+> 当前版本：`1.1.1+21`（发布 APK 仅 arm64）
 
 ---
 
@@ -12,13 +12,13 @@
 | Flutter 版本 | `3.47.2` stable（Framework revision d3b14c8769，2026-08-26） |
 | Dart 版本 | `3.13.2`（SDK 约束 `>=3.0.0 <4.0.0`，Flutter 约束 `>=3.10.0`） |
 | 状态管理 | **Provider**（`provider: ^6.1.1`）+ 少量 `setState`；仓储层均为 `ChangeNotifier`，UI 用 `context.watch<X>()` / `context.read<X>()` |
-| 路由 | **Navigator 1.0**（`MaterialPageRoute` 直推）。pubspec 虽声明了 `go_router: ^13.0.0` 但**实际代码未使用**，全部为 `Navigator.push` + 自研 `pushThrottled` 节流封装 |
+| 路由 | **Navigator 1.0**（`MaterialPageRoute` 直推），全部为 `Navigator.push` + 自研 `pushThrottled` 节流封装。原先「声明了未使用」的 `go_router` 已在清理中删除 |
 | 网络 | **Dio**（`dio: ^5.4.0`） |
 | 本地存储 | **Hive**（`hive: ^2.2.3` + `hive_flutter: ^1.1.0` + `path_provider`）；**未用** SharedPreferences / sqflite |
 | 图片加载 | **cached_network_image**（`^3.3.0`）+ 本地封面 `Image.file`（均带 `memCacheWidth` / `cacheWidth` 限制解码尺寸） |
-| 音频播放 | `just_audio: ^0.9.36` + `just_audio_background`（通知栏/锁屏控制） |
+| 音频播放 | `just_audio: ^0.9.36` + `audio_service: ^0.18.19`（通知栏/锁屏控制）。**不用** `just_audio_background`：它在 Android 16 上 MediaSession 状态无法更新，通知栏永远不出现，现由 `AudioPlayerService` 内部持 `AppAudioHandler` 手动推送状态 |
 | 内置 WebView | `flutter_inappwebview: 6.2.0-beta.3`（夸克登录页，**必须锁此版本**，稳定版在 AGP 9 下构建失败） |
-| 其他 | `file_picker`（本地导入）、`intl`、`url_launcher`（OAuth）、`encrypt`、`html`、`crypto`、`permission_handler: 11.3.1` |
+| 其他 | `file_picker`（本地导入）、`url_launcher`（OAuth）、`html`、`permission_handler: 11.3.1`（`encrypt` 保留未用，留给后续 Hive 加密） |
 | 代码生成 | `hive_generator` + `build_runner`（Hive 模型 `.g.dart`） |
 | 构建环境 | Java 17、Gradle 9.3.1、AGP 9.1.0、Kotlin 2.4（`kotlin.incremental=false`，与 Java 25 组合下增量编译有 bug） |
 
@@ -36,10 +36,10 @@ audiobook_app_src/
 │  │  ├─ listen_session.dart       #   收听会话/历史（typeId 3）
 │  │  ├─ book.dart / chapter.dart / drive_item.dart  #   纯内存模型（不落盘）
 │  ├─ repositories/                # 本地数据仓储，全部 ChangeNotifier（驱动 UI 刷新）
-│  │  ├─ bookshelf_repository.dart #   书架 CRUD + 拖动排序
+│  │  ├─ bookshelf_repository.dart #   书架 CRUD + 拖动排序 + 章节独立 box 读写 / getAll 缓存
 │  │  ├─ progress_repository.dart  #   每本书的播放进度
 │  │  ├─ listen_session_repository.dart  # 收听历史（上限 200 条自动裁剪）
-│  │  ├─ stats_repository.dart     #   按天/按书收听时长统计（纯 Map 落 Hive）
+│  │  ├─ stats_repository.dart     #   按天/按书收听时长统计（纯 Map 落 Hive，通知节流）
 │  ├─ services/                    # 业务服务（网络/播放核心，Agent 禁改区，见 §7）
 │  │  ├─ audio_player_service.dart #   ★ 播放核心：章节加载、直链解析、会话制历史、预加载、定时
 │  │  ├─ cloud_drive_service.dart  #   网盘抽象接口 + ResolvedStream / ShareParseResult
@@ -48,6 +48,8 @@ audiobook_app_src/
 │  │  ├─ resource_search_service.dart  # 全网搜书（复用 5 路发现渠道）
 │  │  ├─ local_import_service.dart #   本地音频文件夹导入
 │  │  ├─ storage_service.dart      #   Hive 初始化、box/adapter 注册、app_config 读写
+│  │  ├─ drive_list_cache.dart     #   网盘目录列举内存缓存（TTL 60s + LRU 32）
+│  │  ├─ log_service.dart          #   统一日志与崩溃回捞（release 静默、URL 脱敏、crash.log 轮转）
 │  ├─ pages/                       # 12 个页面
 │  │  ├─ home_page.dart            #   底部三 tab（书架/历史/统计）+ 手势返回联动
 │  │  ├─ bookshelf_page.dart       #   书架（网格 2/3/4 列 + 列表视图，可拖动排序）
@@ -55,20 +57,21 @@ audiobook_app_src/
 │  │  ├─ player_page.dart          #   播放页（全局唯一，含目录面板/倍速/定时 BottomSheet）
 │  │  ├─ history_page.dart         #   收听历史（会话制）
 │  │  ├─ stats_page.dart           #   收听统计（月度热力图）
-│  │  ├─ search_page.dart          #   书架内搜索
 │  │  ├─ resource_search_page.dart #   全网搜书
-│  │  ├─ drive_browser_page.dart   #   网盘文件浏览器（面包屑导航、竞态守卫）
+│  │  ├─ book_source_page.dart     #   书源管理（内置源开关 / 自定义源增删）
+│  │  ├─ drive_browser_page.dart   #   网盘文件浏览器（面包屑导航、竞态守卫、目录缓存）
 │  │  ├─ drive_login_page.dart     #   网盘登录入口
 │  │  ├─ quark_web_login_page.dart #   夸克内置 WebView 登录（桌面 UA）
 │  │  ├─ edit_book_info_page.dart  #   编辑书籍信息（封面/作者/简介）
 │  ├─ widgets/                     # 公共组件
 │  │  ├─ floating_player_ball.dart #   全局悬浮播放球（Overlay 挂载，见 §4）
-│  │  ├─ book_card.dart            #   书籍卡片
-│  │  ├─ mini_player.dart          #   迷你播放栏（已被悬浮球替代，保留）
+│  │  ├─ frosted_glass.dart        #   毛玻璃容器 / 底衬（FrostedGlass、showFrostedBottomSheet）
+│  │  ├─ app_page_route.dart       #   统一页面转场动画
 │  │  ├─ throttled_navigator.dart  #   跳转节流 600ms + 播放页单例守卫
 │  └─ theme/
 │     └─ app_theme.dart            # 唯一主题定义文件
-├─ test/models_test.dart           # 单元测试
+├─ test/                           # 单元测试（models / book_source / online_book_source /
+│                                  #   quark_auth / bookshelf_migration / perf_cache）
 ├─ tool/                           # 独立调试/爬虫脚本（纯 Dart，不参与打包）
 └─ android/ ios/ web/
 ```
@@ -103,12 +106,10 @@ audiobook_app_src/
 
 | 类型 | 组件 | 文件路径 | 说明 |
 |---|---|---|---|
-| 书籍卡片 | `BookCard` | `lib/widgets/book_card.dart` | 通用书卡（书架网格也用） |
 | 书架 item | `_BookshelfItem`（StatefulWidget，独立 Widget） | `lib/pages/bookshelf_page.dart:294` | 网格/列表双形态，含快速播放按钮、长按菜单 |
 | 占位封面 | `_PlaceholderCover` | `bookshelf_page.dart:694`、`shelf_book_detail_page.dart`（同名私有类两处实现） | 按书名哈希生成渐变占位图 |
 | 缩略图 | 无独立组件；各页面私有 `_cover()` / `_buildCover()` / `_coverWidget()` 方法 | `bookshelf_page.dart` / `shelf_book_detail_page.dart` / `player_page.dart` | 均已带解码尺寸限制（`cacheWidth`/`memCacheWidth` 300~600） |
 | 悬浮播放球 | `FloatingPlayerBall` | `lib/widgets/floating_player_ball.dart` | 全局 Overlay 挂载（`MaterialApp.builder`），可拖动、展开小横条 |
-| 迷你播放栏 | `MiniPlayer` | `lib/widgets/mini_player.dart` | 旧组件，现由悬浮球替代 |
 | 导航节流 | `pushThrottled` / `pushPlayerPage` | `lib/widgets/throttled_navigator.dart` | 600ms 节流 + 播放页单例 |
 | 弹窗组件 | **无公共封装**，全部就地 `showDialog` / `showModalBottomSheet` | 见 §5 | 改造弹窗时需逐处处理 |
 | BottomSheet | 同上，就地实现 | 见 §5 | — |
@@ -174,7 +175,11 @@ audiobook_app_src/
 - **`streamUrlResolver` 装配在 `main.dart`**：按 `chapter.driveType` 严格路由，夸克分享链接绝不能交给百度服务
 
 **本地存储（`storage_service.dart` + `repositories/`）**
-- Hive box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `listening_stats`
+- Hive box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `listening_stats` / `chapters`
+- **`chapters` box（PERF-01）**：key = bookId，value = `List<Map>`。章节不再内嵌在书记录里，
+  `BookshelfBook.toJson()` 已不输出 `chapters`；读取走 `BookshelfRepository.getChapters()`：
+  内存 LRU(5) → `chapters` box → 回落旧内嵌字段。**旧字段保留不清理**，双读保证可回滚。
+  编辑书籍信息（`edit_book_info_page`）刻意不传 chapters，避免重写上千条章节。
 - typeId 已占用：1（PlaybackProgress）、2（BookshelfBook）、3（ListenSession）；**改模型必须跑 build_runner**
 - 球心比例持久化协议（`saveBallDxRatio`/`getBallDxRatio`，含旧协议兼容）、每书跳过秒数 key（`skip_intro_<bookId>`）
 - 封面文件生命周期：App 私有目录 `covers/`，移出书架同步删除
@@ -220,7 +225,7 @@ audiobook_app_src/
 name: audiobook_app
 description: 聆云 - 网盘有声书播放器（直接播放网盘音频文件夹，管理目录、进度与收听历史）
 publish_to: 'none'
-version: 1.0.8+9
+version: 1.1.1+21
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -244,19 +249,19 @@ dependencies:
   cached_network_image: ^3.3.0
   # State management
   provider: ^6.1.1
-  # Routing
-  go_router: ^13.0.0        # ⚠️ 已声明未使用，实际全用 Navigator 1.0
-  # Utils
-  intl: ^0.19.0
   # Launch URLs (OAuth authorization)
   url_launcher: ^6.2.5
-  encrypt: ^5.0.3
   html: ^0.15.7
-  crypto: ^3.0.7
+  # 保留但当前无 import：留给后续 SEC-01（app_config 用 HiveAesCipher 加密）。
+  # 原先并列、已确认全库 0 引用的 go_router / intl / crypto 已删除。
+  encrypt: ^5.0.3
   # 内置网页登录（必须锁 6.2.0-beta 线，稳定版在 AGP 9 下构建失败）
   flutter_inappwebview: 6.2.0-beta.3
-  just_audio_background: ^0.0.1-beta.17
   permission_handler: 11.3.1
+  # 通知栏 / 锁屏播放控制（MediaSession）。不用 just_audio_background
+  # （在 Android 16 上 MediaSession 状态不更新），改由 AudioPlayerService
+  # 内部持 AppAudioHandler 手动推送状态。
+  audio_service: ^0.18.19
 
 dev_dependencies:
   flutter_test:

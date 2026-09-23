@@ -5,9 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import '../models/book.dart';
+import 'drive_login_page.dart';
 import '../services/audio_player_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_page_route.dart';
 import '../widgets/frosted_glass.dart';
+import '../widgets/throttled_navigator.dart';
 
 class PlayerPage extends StatelessWidget {
   const PlayerPage({super.key});
@@ -169,21 +172,49 @@ class PlayerPage extends StatelessWidget {
                             color: Theme.of(context).colorScheme.errorContainer,
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child: Row(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Icon(Icons.error_outline_rounded,
-                                  color:
-                                      Theme.of(context).colorScheme.onErrorContainer),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  player.lastError!,
-                                  style: TextStyle(
+                              Row(
+                                children: [
+                                  Icon(Icons.error_outline_rounded,
                                       color: Theme.of(context)
                                           .colorScheme
                                           .onErrorContainer),
-                                ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      player.lastError!,
+                                      style: TextStyle(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onErrorContainer),
+                                    ),
+                                  ),
+                                ],
                               ),
+                              // 登录失效时给一个可操作的出口：否则用户只能
+                              // 自己猜「是不是要重贴一次 Cookie」。
+                              if (player.cloudAuthExpired) ...[
+                                const SizedBox(height: 8),
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: TextButton.icon(
+                                    onPressed: () => context.pushThrottled(
+                                      AppPageRoute(
+                                        builder: (_) => const DriveLoginPage(),
+                                      ),
+                                    ),
+                                    icon: const Icon(Icons.login, size: 18),
+                                    label: const Text('去重新连接'),
+                                    style: TextButton.styleFrom(
+                                      foregroundColor: Theme.of(context)
+                                          .colorScheme
+                                          .onErrorContainer,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
                         ),

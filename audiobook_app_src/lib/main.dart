@@ -17,6 +17,7 @@ import 'services/audio_player_service.dart' show AudioPlayerService, AppAudioHan
 import 'services/baidu_drive_service.dart';
 import 'services/book_source/book_source_engine.dart';
 import 'services/local_import_service.dart';
+import 'services/log_service.dart';
 import 'services/quark_drive_service.dart';
 import 'services/cloud_drive_service.dart';
 import 'services/resource_search_service.dart';
@@ -26,10 +27,23 @@ import 'theme/app_tokens.dart';
 import 'widgets/floating_player_ball.dart';
 import 'widgets/throttled_navigator.dart' show appNavigatorKey;
 
-/// 统一的错误出口：后续接崩溃落文件时只需改这一处。
+/// 统一的错误出口。四个来源都汇到这里：
+/// `FlutterError.onError`、`PlatformDispatcher.instance.onError`、
+/// `runZonedGuarded` 的异步异常、以及存储初始化重试。
+///
+/// 除了原有的 debugPrint（开发期看 logcat），这里**追加**一条落盘：
+/// release 包 logcat 拿不到（也不该把细节打进去），崩溃只能靠私有目录的
+/// `crash.log` 回捞。见 `services/log_service.dart`。
 void reportError(Object error, StackTrace stack, {String tag = 'Error'}) {
   debugPrint('[$tag] $error');
   debugPrint('[$tag] 堆栈:\n$stack');
+  // 后台写入，不阻塞错误处理路径。recordCrash 内部自带 try/catch 且永不抛出，
+  // 所以这里不需要 await，也不会二次引发崩溃。
+  //
+  // 时序说明：LogService.instance 是懒加载静态字段，构造它没有副作用
+  // （目录是在 recordCrash 内部按需解析的），因此无需在 main() 里显式提前
+  // 初始化；本函数只会在 ensureInitialized() 之后被注册的处理器里调用。
+  unawaited(LogService.instance.recordCrash(error, stack, tag: tag));
 }
 
 Future<void> main() async {
@@ -190,6 +204,11 @@ Future<void> bootstrapApp(StorageService storage) async {
       return null;
     }
   };
+  // 取流失败时网盘服务已同步把 authStatus 置为 expired，播放器直接读即可，
+  // 从而把「无法获取播放链接」换成「登录已失效，去重新连接」的可操作提示。
+  playerService.cloudAuthExpiredChecker = () =>
+      baiduDrive.authStatus == AuthStatus.expired ||
+      quarkDrive.authStatus == AuthStatus.expired;
 
   // 在线书源章节懒解析：播放页 → 音频直链（书源规则驱动）。
   // chapter.shareUrl 存书源 id，播放器按 id 找对应规则。

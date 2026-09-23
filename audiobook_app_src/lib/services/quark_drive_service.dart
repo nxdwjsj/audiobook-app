@@ -32,6 +32,28 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
   /// rejects these API calls with HTTP 405 (method not allowed).
   static const String _apiBase = 'https://drive-pc.quark.cn';
 
+  /// HTTP 状态码：命中即判定为「需要重新连接」（重新粘贴 Cookie）。
+  /// 412 尤其关键 —— 下载 CDN 对没有有效登录 Cookie 的请求返回 412
+  /// （见 [_cdnHeaders] 注释），而它的响应体并不是本服务的 JSON 结构。
+  static const Set<int> _authExpiredStatuses = <int>{401, 403, 412};
+
+  /// 业务码：命中即判定为「登录态失效」。
+  /// 401/403/412 与 HTTP 层对齐，其余为夸克常见的登录失效码。
+  /// 注意：这几个业务码来自社区抓包整理，未逐一在线上验证；
+  /// 若线上冒出新的失效码，往这里补一个数字即可，判定逻辑不用改。
+  static const Set<int> _authExpiredCodes = <int>{
+    401, // 未授权
+    403, // 禁止访问
+    412, // 前置条件失败（CDN 的 Cookie 校验）
+    10001, // 未登录
+    40001, // 登录态失效
+    41008, // 登录凭证已过期
+  };
+
+  /// 启动后台校验的超时上限。首屏已不再等待它（见 [init]），这里限制的是
+  /// 「乐观状态被纠正」的最长延迟：最多 5 秒内 UI 一定落到真实登录状态。
+  static const Duration _initVerifyTimeout = Duration(seconds: 5);
+
   static const Map<String, String> _browserHeaders = {
     // MUST match the Quark PC client UA: the download CDN
     // (dl-pc-sz.pds.quark.cn) validates the User-Agent on OSS-signed URLs.
@@ -49,18 +71,35 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
   Map<String, String> get _cdnHeaders =>
       {'Cookie': _cookie ?? ''};
 
-  final Dio _dio = createNetworkClient(
-    headers: _browserHeaders,
-  );
+  /// 网络客户端。构造时可注入，便于单元测试用拦截器伪造响应（不依赖真实网络）。
+  final Dio _dio;
 
   final StorageService _storage;
   String? _cookie;
   AuthStatus _authStatus = AuthStatus.unauthenticated;
 
+  /// 最近一次 API 失败是否被判定为「登录态失效」。
+  /// 由 [_markAuthExpired] 置位；[init] 的启动校验据此决定落到 expired
+  /// 还是保持已连接（网络异常时不能误导用户去换 Cookie）。
+  bool _authFailureDetected = false;
+
+  /// [init] 里 `unawaited` 出去的那个后台启动校验任务。
+  Future<void>? _startupCheck;
+
+  /// 等待 [init] 触发的后台登录态校验结束。
+  ///
+  /// [init] 现在是「乐观置位 + 后台校验」，返回时校验通常还没跑完。生产代码
+  /// 一般不需要它（UI 靠 `notifyListeners()` 刷新）；测试用它等到状态稳定，
+  /// 避免用 `sleep` 猜时间。未调用过 [init]、或本地无 Cookie 而未触发校验时，
+  /// 返回一个已完成的 Future。
+  Future<void> get startupCheckDone => _startupCheck ?? Future<void>.value();
+
   /// share pwd_id -> stoken (obtained when parsing a share link).
   final Map<String, String> _stokenCache = {};
 
-  QuarkDriveService(this._storage);
+  /// [dio] 仅用于测试注入（伪造响应）；运行时不传，走 [createNetworkClient]。
+  QuarkDriveService(this._storage, {Dio? dio})
+      : _dio = dio ?? createNetworkClient(headers: _browserHeaders);
 
   @override
   DriveType get driveType => DriveType.quark;
@@ -68,13 +107,96 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
   @override
   AuthStatus get authStatus => _authStatus;
 
+  /// HTTP 状态码是否表示「需要重新连接」。公开以便单元测试覆盖判定表。
+  static bool isAuthExpiredStatus(int status) =>
+      _authExpiredStatuses.contains(status);
+
+  /// 业务码是否表示「登录态失效」。公开以便单元测试覆盖判定表。
+  static bool isAuthExpiredCode(int code) => _authExpiredCodes.contains(code);
+
   @override
   Future<void> init() async {
     _cookie = _storage.getQuarkCookie();
-    if (_cookie != null && _cookie!.isNotEmpty) {
-      _authStatus = AuthStatus.authenticated;
+    if (_cookie == null || _cookie!.isEmpty) {
+      // 乐观置位只在「本地确实有非空 Cookie」时发生；没有 Cookie 就是未连接。
+      _authStatus = AuthStatus.unauthenticated;
+      notifyListeners();
+      return;
     }
+    // 首屏不等待网络：先乐观置为已连接让 UI 立刻可用，再后台校验。
+    //
+    // 背景：本地存着 Cookie 不等于它还有效（Cookie 只在「写入时」校验过，
+    // 用一段时间后会退化，见 setCookie）。此前这里同步等校验，离线/弱网冷启动
+    // 最坏要干等 [_initVerifyTimeout]（5 秒）才出首屏。
+    //
+    // 改成「乐观置位 + 后台校验 + 事后纠正」：校验结束由 [_verifySavedCookie]
+    // 统一 notifyListeners()，状态会自己刷成 expired 并给出「重新连接」入口
+    // （drive_login_page / drive_browser_page 都是 context.watch，能收到通知）。
+    // 代价仅是一个有界的（≤5 秒）瞬时状态，比原来「永久假已连接」严格更好。
+    _authStatus = AuthStatus.authenticated;
     notifyListeners();
+    final check = _verifySavedCookie();
+    _startupCheck = check;
+    unawaited(check);
+  }
+
+  /// 校验本地保存的 Cookie 是否仍然有效（与 [setCookie] 共用 [_validateCookie]）。
+  ///
+  /// 容错策略：只有被**明确判定**为登录态失效才置为 expired；网络不通、超时、
+  /// 未知错误一律保持已连接 —— 断网不是 Cookie 的错，把断网报成「Cookie 失效」
+  /// 会让用户反复重贴 Cookie（与 [setCookie] 里的处理思路一致）。
+  ///
+  /// 本方法在 [init] 里是**后台执行**的（`unawaited`），因此有两条额外契约：
+  /// - 结束时由它自己 `notifyListeners()`（[init] 不再重复通知，否则会白触发
+  ///   一轮重建）；只在被调用的上下文里通知一次。
+  /// - **任何异常都必须在这里被吃掉**，否则会变成未捕获的异步异常（release 里
+  ///   就是一个崩溃点）。
+  Future<void> _verifySavedCookie() async {
+    try {
+      await _validateCookie().timeout(_initVerifyTimeout);
+      _authStatus = AuthStatus.authenticated;
+    } on TimeoutException {
+      // 校验超时按「未知」处理，保持已连接，别误导用户去换 Cookie
+      _authStatus = AuthStatus.authenticated;
+    } catch (e) {
+      if (_isNetworkFailure(e)) {
+        _authStatus = AuthStatus.authenticated;
+      } else {
+        // 其余失败以判定结果为准：命中失效置 expired，未命中的保持已连接
+        _authStatus = _authFailureDetected
+            ? AuthStatus.expired
+            : AuthStatus.authenticated;
+      }
+    }
+    // 唯一一次通知。单独包一层 try：即便 service 已被 dispose，
+    // 也不能让这个后台任务把异常抛到 zone。
+    try {
+      notifyListeners();
+    } catch (e) {
+      debugPrint('[quark] 启动校验后通知失败（已忽略）: $e');
+    }
+  }
+
+  /// 轻量校验当前 [_cookie] 是否仍然有效：调一次账户信息接口。
+  /// [setCookie] 与 [init] 共用同一条链路，避免两处判定标准不一致。
+  /// 校验失败会抛异常；是否被判定为「登录态失效」记录在 [_authFailureDetected]。
+  Future<void> _validateCookie() async {
+    _authFailureDetected = false;
+    await getAccountInfo();
+  }
+
+  /// 是否为「连不上网」类失败：超时、连接超时、连接中断、请求取消等。
+  /// 这类失败不能引导用户去换 Cookie（Cookie 本身可能还是好的）。
+  bool _isNetworkFailure(Object e) {
+    if (e is TimeoutException) return true;
+    if (e is DioException) {
+      return e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.sendTimeout ||
+          e.type == DioExceptionType.receiveTimeout ||
+          e.type == DioExceptionType.connectionError ||
+          e.type == DioExceptionType.cancel;
+    }
+    return false;
   }
 
   @override
@@ -92,6 +214,10 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
   Future<void> setCookie(String cookie) async {
     final trimmed = cookie.trim();
     final previous = _cookie;
+    // 记住校验前的状态：失败时按它回滚，而不是按「本地有没有 Cookie 字符串」
+    // 反推 —— 否则冷启动已判定过期的账号，用户重贴一个仍然无效的 Cookie 后
+    // 会被回滚成「已连接」，刚修好的状态又丢了。
+    final previousStatus = _authStatus;
 
     if (trimmed.isEmpty) {
       _cookie = null;
@@ -103,16 +229,14 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
 
     _cookie = trimmed;
     try {
-      await getAccountInfo();
+      await _validateCookie();
       await _storage.saveQuarkCookie(trimmed); // persist only after success
       _authStatus = AuthStatus.authenticated;
       notifyListeners();
     } catch (e) {
       // Restore the previous state so a typo cannot log the user out.
       _cookie = previous;
-      _authStatus = (previous != null && previous.isNotEmpty)
-          ? AuthStatus.authenticated
-          : AuthStatus.unauthenticated;
+      _authStatus = previousStatus;
       notifyListeners();
       // 连不上网时也会走到这里，别一律说成 Cookie 无效（用户会一直换 Cookie）
       if (e is DioException && e.type != DioExceptionType.badResponse) {
@@ -131,6 +255,7 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
     _savedShareAudio.clear();
     _savingShares.clear();
     _shareInboxFid = null;
+    _authFailureDetected = false;
     _authStatus = AuthStatus.unauthenticated;
     notifyListeners();
   }
@@ -154,27 +279,56 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
   /// Throws a descriptive [Exception] when the API response is not usable.
   /// Covers: non-JSON body, HTTP-level errors (405/500...), and
   /// business-level errors (code != 0).
+  ///
+  /// 每条失败路径都会先过一遍登录态判定（[_handleAuthError]）：
+  /// 此前 non-JSON 分支直接 throw，HTTP 412 与 HTML 登录页这类「响应体不是
+  /// 本服务 JSON」的失效场景根本走不到判定，UI 就一直停在「已连接」。
   Never _throwApiError(String tag, Response response) {
     _logHttp(tag, response);
     final status = response.statusCode ?? -1;
     final data = response.data;
     if (data is! Map) {
-      throw Exception('[$tag] HTTP $status，响应非 JSON: '
-          '${data.toString().substring(0, data.toString().length.clamp(0, 300))}');
+      // 登录态失效时服务端常返回 HTML 登录页（HTTP 200）或 CDN 的 412 纯文本，
+      // 都拿不到 JSON。除 5xx（服务端故障，与登录态无关）外一律按失效处理。
+      if (status < 500) {
+        _markAuthExpired(tag: tag, status: status, code: status);
+      }
+      // 只报类型与长度：响应体里可能带重定向地址或页面内的敏感串，不落 logcat
+      throw Exception('[$tag] HTTP $status，响应非 JSON '
+          '(type=${data.runtimeType}, ${data.toString().length} 字节)');
     }
     final code = data['code'];
     if (code != 0) {
-      _handleAuthError(code is int ? code : int.tryParse(code.toString()) ?? -1);
+      _handleAuthError(
+        code is int ? code : int.tryParse(code.toString()) ?? -1,
+        status: status,
+        tag: tag,
+      );
       throw Exception('[$tag] code=$code ${data['message'] ?? ''}');
     }
+    // 业务码为 0 但 HTTP 层失败（4xx/5xx）：状态码也要判一次，
+    // 否则 412 这类「状态码失败、响应体里没有业务码」的情况会漏掉。
+    _handleAuthError(-1, status: status, tag: tag);
     throw Exception('[$tag] HTTP $status 未知错误');
   }
 
-  void _handleAuthError(int code) {
-    if (code == 401 || code == 403) {
-      _authStatus = AuthStatus.expired;
-      notifyListeners();
-    }
+  /// 判定一次 API 失败是否需要用户重新连接；命中则把 [authStatus] 置为 expired。
+  /// [code] 业务码（拿不到业务码时传 -1），[status] HTTP 状态码（未知传 -1）。
+  /// 返回是否判定为登录态失效。
+  bool _handleAuthError(int code, {int status = -1, String? tag}) {
+    if (!isAuthExpiredCode(code) && !isAuthExpiredStatus(status)) return false;
+    _markAuthExpired(tag: tag, status: status, code: code);
+    return true;
+  }
+
+  /// 无条件标记为「需要重新连接」：非 JSON 响应等拿不到业务码的场景走这里。
+  /// 只记录状态码与业务码，绝不打印 headers / body —— Cookie 会泄进 logcat。
+  void _markAuthExpired({String? tag, int status = -1, int code = -1}) {
+    _authStatus = AuthStatus.expired;
+    _authFailureDetected = true;
+    notifyListeners();
+    debugPrint('[quark] 登录态失效，需重新连接'
+        '${tag == null ? '' : ' [$tag]'}: http=$status, code=$code');
   }
 
   /// Extract pwd_id from a share URL like
@@ -964,6 +1118,13 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
 
     final data = response.data;
     if (data is! Map || data['data'] == null) {
+      // 登录态退化后 account/info 常见的一种形态是「code=0 但取不到用户信息」：
+      // 走到 _throwApiError 时业务码是 0，判定不出来，冷启动就会把失效的
+      // Cookie 当成有效。这里明确补一次失效标记。
+      if (data is Map) {
+        _markAuthExpired(
+            tag: 'account/info', status: response.statusCode ?? -1);
+      }
       _throwApiError('account/info', response);
     }
     _logHttp('account/info', response);

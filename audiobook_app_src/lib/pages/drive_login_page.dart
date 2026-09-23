@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../services/baidu_drive_service.dart';
 import '../services/cloud_drive_service.dart';
 import '../services/quark_drive_service.dart';
+import '../services/drive_list_cache.dart';
 import '../widgets/throttled_navigator.dart';
 import 'quark_web_login_page.dart';
 
@@ -31,6 +32,10 @@ class _DriveLoginPageState extends State<DriveLoginPage> {
     _quarkCookieController.dispose();
     super.dispose();
   }
+
+  /// 切换账号后必须清掉目录缓存：否则新账号在 60 秒 TTL 内可能看到
+  /// 上一个账号的目录列表（PERF-03 引入的缓存需要这个隔离点）。
+  void _dropDriveListCache() => DriveListCache.instance.clear();
 
   Future<void> _saveBaiduAppKey() async {
     final appKey = _baiduAppKeyController.text.trim();
@@ -67,6 +72,7 @@ class _DriveLoginPageState extends State<DriveLoginPage> {
     try {
       final service = context.read<BaiduDriveService>();
       await service.setAccessToken(token);
+      _dropDriveListCache();
       if (mounted) {
         setState(() => _message = '百度网盘已连接');
         ScaffoldMessenger.of(context).showSnackBar(
@@ -92,6 +98,7 @@ class _DriveLoginPageState extends State<DriveLoginPage> {
     try {
       final service = context.read<BaiduDriveService>();
       await service.setCookie(cookie);
+      _dropDriveListCache();
       if (mounted) {
         setState(() => _message = '百度网盘 Cookie 已保存');
         ScaffoldMessenger.of(context).showSnackBar(
@@ -117,6 +124,7 @@ class _DriveLoginPageState extends State<DriveLoginPage> {
     try {
       final service = context.read<QuarkDriveService>();
       await service.setCookie(cookie);
+      _dropDriveListCache();
       if (mounted) {
         setState(() => _message = '夸克网盘已连接');
         ScaffoldMessenger.of(context).showSnackBar(
@@ -159,7 +167,10 @@ class _DriveLoginPageState extends State<DriveLoginPage> {
             icon: Icons.cloud_rounded,
             color: Colors.blue,
             connected: baiduService.authStatus == AuthStatus.authenticated,
-            onLogout: baiduService.logout,
+            onLogout: () async {
+              _dropDriveListCache();
+              await baiduService.logout();
+            },
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -253,7 +264,10 @@ class _DriveLoginPageState extends State<DriveLoginPage> {
             icon: Icons.cloud_done_rounded,
             color: Colors.deepPurple,
             connected: quarkService.authStatus == AuthStatus.authenticated,
-            onLogout: quarkService.logout,
+            onLogout: () async {
+              _dropDriveListCache();
+              await quarkService.logout();
+            },
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [

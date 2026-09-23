@@ -1,7 +1,7 @@
 name: audiobook_app
 description: 聆云 - 网盘有声书播放器（直接播放网盘音频文件夹，管理目录、进度与收听历史）
 publish_to: 'none'
-version: 1.1.0+20
+version: 1.1.1+21
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -32,17 +32,15 @@ dependencies:
   # State management
   provider: ^6.1.1
   
-  # Routing
-  go_router: ^13.0.0
-  
-  # Utils
-  intl: ^0.19.0
-  
   # Launch URLs (OAuth authorization)
   url_launcher: ^6.2.5
-  encrypt: ^5.0.3
   html: ^0.15.7
-  crypto: ^3.0.7
+
+  # 保留但当前无 import：留给后续 SEC-01（app_config 用 HiveAesCipher 加密）。
+  # 之所以先不删，是因为加密方案尚未定稿；若最终确定不走 Hive 加密，
+  # 可连同本注释一起移除。（原先与它并列的 go_router / intl / crypto
+  # 已确认全库 0 引用，本轮删除。）
+  encrypt: ^5.0.3
 
   # 内置网页登录（夸克官方登录页 → 自动读取 Cookie）
   # 必须是 6.2.0-beta 线：稳定版 6.1.5 依赖的 flutter_inappwebview_android 1.1.3

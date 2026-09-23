@@ -34,14 +34,38 @@ class BaiduDriveService extends ChangeNotifier implements CloudDriveService {
     'Referer': 'https://pan.baidu.com/',
   };
 
-  final Dio _dio = createNetworkClient(headers: _browserHeaders);
+  final Dio _dio;
 
   final StorageService _storage;
   String? _accessToken;
   String? _cookie;
   AuthStatus _authStatus = AuthStatus.unauthenticated;
 
-  BaiduDriveService(this._storage);
+  /// 最近一次校验是否被判定为「登录态失效」（errno=-6 或非 JSON 失效页）。
+  /// 由 [_checkErrno] / [_probeToken] 置位；[init] 的启动校验据此决定落到
+  /// expired 还是保持已连接（网络异常不能误导用户去换凭据）。
+  bool _authFailureDetected = false;
+
+  /// [init] 里 `unawaited` 出去的后台启动校验任务。
+  Future<void>? _startupCheck;
+
+  /// 启动校验超时上限（与夸克保持一致）。
+  static const Duration _initVerifyTimeout = Duration(seconds: 5);
+
+  /// [dio] 仅用于测试注入（伪造响应）；运行时不传，走 [createNetworkClient]。
+  BaiduDriveService(this._storage, {Dio? dio})
+      : _dio = dio ?? createNetworkClient(headers: _browserHeaders);
+
+  /// 等待 [init] 触发的后台登录态校验结束。
+  ///
+  /// [init] 现在是「乐观置位 + 后台校验」，返回时校验通常还没跑完。生产代码
+  /// 一般不需要它（UI 靠 `notifyListeners()` 刷新）；测试用它等到状态稳定，
+  /// 避免用 `sleep` 猜时间。未调用过 [init]、或本地无凭据而未触发校验时，
+  /// 返回一个已完成的 Future。
+  Future<void> get startupCheckDone => _startupCheck ?? Future<void>.value();
+
+  bool get _hasToken => _accessToken != null && _accessToken!.isNotEmpty;
+  bool get _hasCookie => _cookie != null && _cookie!.isNotEmpty;
 
   /// The AppKey (API Key) used to build the OAuth authorize URL.
   /// 未配置时返回空串（不再回落到已吊销的 demo key）。
@@ -73,11 +97,121 @@ class BaiduDriveService extends ChangeNotifier implements CloudDriveService {
   Future<void> init() async {
     _accessToken = _storage.getBaiduToken();
     _cookie = _storage.getBaiduCookie();
-    if ((_accessToken != null && _accessToken!.isNotEmpty) ||
-        (_cookie != null && _cookie!.isNotEmpty)) {
-      _authStatus = AuthStatus.authenticated;
+    if (!_hasToken && !_hasCookie) {
+      // 无凭据 → 直接未连接，不做乐观置位。
+      _authStatus = AuthStatus.unauthenticated;
+      notifyListeners();
+      return;
     }
+    // 乐观置位 + 后台校验 + 事后纠正（与夸克 init 完全相同的容错策略）。
+    //
+    // 背景：本地存着 token / cookie 不等于它仍有效（可能已过期或被吊销）。
+    // 此前这里只要有非空凭据就无条件置 authenticated 且**从不校验**，正是
+    // 刚给夸克修掉的那个「永久假已连接」。现在首屏先乐观置为已连接让 UI 立刻
+    // 可用，再后台打一次轻量接口校验；校验结束由 [_verifySavedCredential]
+    // 统一 notifyListeners() 纠正状态（drive_login_page 等是 context.watch，
+    // 能收到通知）。
+    _authStatus = AuthStatus.authenticated;
     notifyListeners();
+    final check = _verifySavedCredential();
+    _startupCheck = check;
+    unawaited(check);
+  }
+
+  /// 后台校验本地保存的凭据是否仍有效。
+  ///
+  /// 容错策略（与夸克一致）：只有被**明确判定**为登录态失效才置 expired；
+  /// 超时 / 断网 / 未知错误一律保持已连接 —— 断网不是凭据的错，报成失效会让
+  /// 用户反复重贴。
+  ///
+  /// 因为是 `unawaited` 的后台任务，有两条契约：
+  /// - 结束时由它自己 `notifyListeners()`（[init] 不再重复通知，否则会白触发
+  ///   一轮重建）；
+  /// - **任何异常都必须在这里被吃掉**，否则会变成未捕获的异步异常（release
+  ///   里就是一个崩溃点）。
+  Future<void> _verifySavedCredential() async {
+    try {
+      await _validateCredential().timeout(_initVerifyTimeout);
+      _authStatus = AuthStatus.authenticated;
+    } on TimeoutException {
+      // 校验超时按「未知」处理，保持已连接，别误导用户去换凭据
+      _authStatus = AuthStatus.authenticated;
+    } catch (e) {
+      if (_isNetworkFailure(e)) {
+        _authStatus = AuthStatus.authenticated;
+      } else {
+        _authStatus = _authFailureDetected
+            ? AuthStatus.expired
+            : AuthStatus.authenticated;
+      }
+    }
+    // 唯一一次通知。单独包一层 try：即便 service 已被 dispose，
+    // 也不能让这个后台任务把异常抛到 zone。
+    try {
+      notifyListeners();
+    } catch (e) {
+      debugPrint('[baidu] 启动校验后通知失败（已忽略）: $e');
+    }
+  }
+
+  /// 轻量校验当前凭据是否仍有效：有 access_token 就查用户信息，否则用 Cookie
+  /// 打一次 `nas?method=uinfo`。失败会抛异常；是否被判定为「登录态失效」记录
+  /// 在 [_authFailureDetected]。**不**在这里 notify，由调用方统一通知一次。
+  Future<void> _validateCredential() async {
+    _authFailureDetected = false;
+    if (_hasToken) {
+      await _probeToken();
+    } else if (_hasCookie) {
+      await _probeCookie();
+    }
+  }
+
+  /// 探测 access_token：非 JSON 失效页 / 业务 errno≠0 都抛异常，
+  /// 其中 errno=-6 视为登录态失效（置 [_authFailureDetected]）。
+  Future<void> _probeToken() async {
+    final resp = await _dio.get(
+      '$_apiBase/userinfo',
+      queryParameters: {'method': 'uinfo', 'access_token': _accessToken},
+    );
+    final data = resp.data;
+    if (data is! Map) {
+      // 登录页 HTML 之类的非 JSON：除 5xx（服务端故障）外一律按失效处理
+      if ((resp.statusCode ?? -1) < 500) _authFailureDetected = true;
+      throw Exception('Baidu userinfo 响应非 JSON (HTTP ${resp.statusCode})');
+    }
+    final errno = data['errno'];
+    if (errno != null && errno != 0) {
+      if (_isInvalidTokenErrno(errno)) _authFailureDetected = true;
+      throw Exception('Baidu API error: $errno');
+    }
+  }
+
+  /// 探测 Cookie（BDUSS）：与 [setCookie] 共用同一条判定链路。
+  Future<void> _probeCookie() async {
+    final resp = await _dio.get<Map<String, dynamic>>(
+      '$_apiBase/nas',
+      queryParameters: {'method': 'uinfo'},
+      options: Options(headers: {'Cookie': _cookie ?? ''}),
+    );
+    final errno = resp.data?['errno'];
+    if (!isHttpSuccess(resp) || (errno is int && errno != 0)) {
+      _authFailureDetected = true;
+      throw Exception('Cookie 无效或已过期 (errno=$errno)');
+    }
+  }
+
+  /// 是否为「连不上网」类失败：超时、连接超时、连接中断、请求取消等。
+  /// 这类失败不能引导用户去换凭据（凭据本身可能还是好的）。
+  bool _isNetworkFailure(Object e) {
+    if (e is TimeoutException) return true;
+    if (e is DioException) {
+      return e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.sendTimeout ||
+          e.type == DioExceptionType.receiveTimeout ||
+          e.type == DioExceptionType.connectionError ||
+          e.type == DioExceptionType.cancel;
+    }
+    return false;
   }
 
   @override
@@ -153,15 +287,7 @@ class BaiduDriveService extends ChangeNotifier implements CloudDriveService {
 
     _cookie = trimmed;
     try {
-      final resp = await _dio.get<Map<String, dynamic>>(
-        '$_apiBase/nas',
-        queryParameters: {'method': 'uinfo'},
-        options: Options(headers: {'Cookie': trimmed}),
-      );
-      final errno = resp.data?['errno'];
-      if (!isHttpSuccess(resp) || (errno is int && errno != 0)) {
-        throw Exception('Cookie 无效或已过期 (errno=$errno)');
-      }
+      await _probeCookie();
       await _storage.saveBaiduCookie(trimmed);
       _authStatus = AuthStatus.authenticated;
       notifyListeners();
@@ -180,6 +306,7 @@ class BaiduDriveService extends ChangeNotifier implements CloudDriveService {
   Future<void> logout() async {
     _accessToken = null;
     _cookie = null;
+    _authFailureDetected = false;
     await _storage.saveBaiduToken('');
     await _storage.saveBaiduCookie('');
     _authStatus = AuthStatus.unauthenticated;
@@ -192,11 +319,17 @@ class BaiduDriveService extends ChangeNotifier implements CloudDriveService {
 
   /// Baidu returns errno -6 when the access_token is invalid/expired.
   void _checkErrno(dynamic errno) {
-    final code = errno is int ? errno : int.tryParse(errno?.toString() ?? '');
-    if (code == -6) {
+    if (_isInvalidTokenErrno(errno)) {
+      _authFailureDetected = true;
       _authStatus = AuthStatus.expired;
       notifyListeners();
     }
+  }
+
+  /// 百度在 access_token 失效 / 过期时返回 errno=-6。
+  static bool _isInvalidTokenErrno(dynamic errno) {
+    final code = errno is int ? errno : int.tryParse(errno?.toString() ?? '');
+    return code == -6;
   }
 
   // ------------------------------------------------------------------
