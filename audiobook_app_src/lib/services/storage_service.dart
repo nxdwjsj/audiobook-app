@@ -39,6 +39,8 @@ class StorageService {
     _hiveReady = true;
   }
 
+  static bool get isStorageReady => _hiveReady;
+
   bool get isReady => _hiveReady;
 
   Box<dynamic> get bookshelf =>
@@ -152,6 +154,13 @@ class StorageService {
 
   double getBallDyRatio() =>
       (config.get('ball_dy_ratio') as num?)?.toDouble() ?? 0.62;
+
+  /// 是否开启了「减弱动效」（低端机降级）。
+  Future<void> saveReduceMotion(bool value) async {
+    await config.put('reduce_motion', value);
+  }
+
+  bool getReduceMotion() => config.get('reduce_motion') as bool? ?? false;
 
   /// 旧协议：贴边侧（true = 右）。无新坐标时用它推算初始 X。
   Future<void> saveBallRight(bool right) async {

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/drive_item.dart';
 import 'cloud_drive_service.dart';
+import 'http/network_client.dart';
 import 'storage_service.dart';
 
 /// Baidu Netdisk cloud drive service.
@@ -21,11 +22,9 @@ class BaiduDriveService extends ChangeNotifier implements CloudDriveService {
   static const String _oauthBase = 'https://openapi.baidu.com/oauth/2.0';
   static const String _webBase = 'https://pan.baidu.com';
 
-  // Baidu Pan official demo app credentials (for personal learning use).
-  // This legacy demo AppKey has been revoked by Baidu. Users must register
-  // their own app at https://pan.baidu.com/union and paste the AppKey (API Key)
-  // in the drive login page.
-  static const String _defaultClientId = 'iYCeC9g08h5vuP9UqvPHKKSVrAz';
+  /// 之前这里保存了百度官方 demo AppKey 作为兜底，但该 key 已被百度吊销，
+  /// 未配置 AppKey 的用户点授权必然失败且报错不直观。现在不再内置任何
+  /// 第三方凭据：未配置时返回空串，由登录页引导用户自行申请。
   static const String _redirectUri = 'oob';
 
   static const Map<String, String> _browserHeaders = {
@@ -35,11 +34,7 @@ class BaiduDriveService extends ChangeNotifier implements CloudDriveService {
     'Referer': 'https://pan.baidu.com/',
   };
 
-  final Dio _dio = Dio(BaseOptions(
-    connectTimeout: const Duration(seconds: 15),
-    receiveTimeout: const Duration(seconds: 15),
-    headers: _browserHeaders,
-  ));
+  final Dio _dio = createNetworkClient(headers: _browserHeaders);
 
   final StorageService _storage;
   String? _accessToken;
@@ -49,11 +44,11 @@ class BaiduDriveService extends ChangeNotifier implements CloudDriveService {
   BaiduDriveService(this._storage);
 
   /// The AppKey (API Key) used to build the OAuth authorize URL.
-  /// Falls back to the (revoked) demo key when the user has not set one.
+  /// 未配置时返回空串（不再回落到已吊销的 demo key）。
   String get clientId {
     final saved = _storage.getBaiduAppKey();
     if (saved != null && saved.isNotEmpty) return saved;
-    return _defaultClientId;
+    return '';
   }
 
   /// Whether the user has configured their own AppKey.
@@ -138,13 +133,47 @@ class BaiduDriveService extends ChangeNotifier implements CloudDriveService {
   }
 
   /// Set the web Cookie (BDUSS) manually, needed for share-link parsing.
+  ///
+  /// 与 setAccessToken / 夸克 setCookie 保持一致：先拿 Cookie 打一次轻量
+  /// 接口验证有效，通过才落盘 —— 避免「粘了过期 Cookie → UI 显示已登录 →
+  /// 所有分享解析都失败」的假登录态。
   Future<void> setCookie(String cookie) async {
-    _cookie = cookie.trim();
-    await _storage.saveBaiduCookie(_cookie!);
-    if (_cookie!.isNotEmpty) {
-      _authStatus = AuthStatus.authenticated;
+    final trimmed = cookie.trim();
+    final previous = _cookie;
+
+    if (trimmed.isEmpty) {
+      _cookie = null;
+      await _storage.saveBaiduCookie('');
+      _authStatus = _accessToken != null && _accessToken!.isNotEmpty
+          ? AuthStatus.authenticated
+          : AuthStatus.unauthenticated;
+      notifyListeners();
+      return;
     }
-    notifyListeners();
+
+    _cookie = trimmed;
+    try {
+      final resp = await _dio.get<Map<String, dynamic>>(
+        '$_apiBase/nas',
+        queryParameters: {'method': 'uinfo'},
+        options: Options(headers: {'Cookie': trimmed}),
+      );
+      final errno = resp.data?['errno'];
+      if (!isHttpSuccess(resp) || (errno is int && errno != 0)) {
+        throw Exception('Cookie 无效或已过期 (errno=$errno)');
+      }
+      await _storage.saveBaiduCookie(trimmed);
+      _authStatus = AuthStatus.authenticated;
+      notifyListeners();
+    } catch (e) {
+      _cookie = previous;
+      _authStatus = (previous != null && previous.isNotEmpty) ||
+              (_accessToken != null && _accessToken!.isNotEmpty)
+          ? AuthStatus.authenticated
+          : AuthStatus.expired;
+      notifyListeners();
+      throw Exception('Cookie 无效或已过期: $e');
+    }
   }
 
   @override

@@ -93,6 +93,7 @@ class _BookSourcePageState extends State<BookSourcePage> {
     // 退场动画结束后再释放，避免动画期访问已 dispose 的 controller
     Future.delayed(const Duration(milliseconds: 400), controller.dispose);
     if (text == null || text.trim().isEmpty) return;
+    if (!mounted) return;
 
     final repo = context.read<BookSourceRepository>();
     final messenger = ScaffoldMessenger.of(context);

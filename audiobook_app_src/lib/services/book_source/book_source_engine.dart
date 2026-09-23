@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
+import '../http/network_client.dart';
 import 'book_source.dart';
 import 'online_book_hit.dart';
 import 'resource_hit.dart';
@@ -56,17 +57,14 @@ class BookSourceEngine {
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
-  final Dio _dio = Dio(BaseOptions(
-    connectTimeout: const Duration(seconds: 15),
-    receiveTimeout: const Duration(seconds: 20),
+  final Dio _dio = createNetworkClient(
     headers: {
       'User-Agent': _browserUa,
       'Accept':
           'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       'Accept-Language': 'zh-CN,zh;q=0.9',
     },
-    validateStatus: (s) => s != null && s < 600,
-  ));
+  );
 
   late final RegExp _shareRe;
   late final RegExp _passcodeRe;

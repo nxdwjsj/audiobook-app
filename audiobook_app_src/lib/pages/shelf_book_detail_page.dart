@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
+import '../widgets/app_page_route.dart';
 import 'package:provider/provider.dart';
 import '../models/book.dart';
 import '../models/bookshelf_book.dart';
@@ -186,7 +188,7 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
             icon: const Icon(Icons.edit_outlined),
             tooltip: '编辑信息',
             onPressed: () => context.pushThrottled(
-              MaterialPageRoute(
+              AppPageRoute(
                 builder: (_) => EditBookInfoPage(bookId: _book.id),
               ),
             ),
@@ -285,7 +287,7 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
             );
           },
           // 添加缓存扩展以提高滚动性能
-          cacheExtent: 2000,
+          scrollCacheExtent: const ScrollCacheExtent.pixels(2000),
         ),
         // 聚合浮动小圆钮：点击展开竖排菜单（回顶/定位/排序），可拖动并记忆位置
         _ChapterFab(
@@ -518,7 +520,7 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
   Future<void> _handleMenuAction(BuildContext context, String action) async {
     switch (action) {
       case 'open_folder':
-        context.pushThrottled(MaterialPageRoute(
+        context.pushThrottled(AppPageRoute(
           builder: (_) => DriveBrowserPage(
             initialDrive: _book.driveType,
             initialPath: _book.drivePath,

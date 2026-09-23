@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/app_page_route.dart';
 import 'package:provider/provider.dart';
 
 import '../models/book.dart';
@@ -351,7 +352,7 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
             icon: const Icon(Icons.travel_explore_rounded),
             tooltip: '书源管理',
             onPressed: () => context.pushThrottled(
-                MaterialPageRoute(builder: (_) => const BookSourcePage())),
+                AppPageRoute(builder: (_) => const BookSourcePage())),
           ),
           const SizedBox(width: 4),
         ],
@@ -755,7 +756,7 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
       leading: const Icon(Icons.menu_book_rounded),
       title: Text(b.title, maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: Text('${b.chapterCount} 集'),
-      onTap: () => context.pushThrottled(MaterialPageRoute(
+      onTap: () => context.pushThrottled(AppPageRoute(
         builder: (_) => ShelfBookDetailPage(book: b),
       )),
     );
@@ -776,7 +777,7 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
   /// 网盘搜索结果点开：目录进目录、音频进所在目录（可加入书架）。
   void _openDriveItem(DriveItem item) {
     if (item.isDir) {
-      context.pushThrottled(MaterialPageRoute(
+      context.pushThrottled(AppPageRoute(
         builder: (_) => DriveBrowserPage(
           initialDrive: DriveType.quark,
           initialPath: item.path,
@@ -784,7 +785,7 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
         ),
       ));
     } else {
-      context.pushThrottled(MaterialPageRoute(
+      context.pushThrottled(AppPageRoute(
         builder: (_) => DriveBrowserPage(
           initialDrive: DriveType.quark,
           initialPath: item.parentPath,

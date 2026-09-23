@@ -12,5 +12,6 @@ analyzer:
     - "**/*.g.dart"
     - build/**
     - android/**
-    - ios/**
-    - web/**
+    # ios/ 与 web/ 平台目录已移除；tool/ 是一次性调试脚本与抓取产物，
+    # 不参与 App 编译，也不应满足 App 的 lint 标准（如 avoid_print）。
+    - tool/**

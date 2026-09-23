@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import '../models/drive_item.dart';
 import 'cloud_drive_service.dart';
+import 'http/network_client.dart';
 import 'storage_service.dart';
 
 /// 转存结果：摊平的音频列表 + 顶层目录信息（目录名 / 转存后的新 fid）。
@@ -48,14 +49,9 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
   Map<String, String> get _cdnHeaders =>
       {'Cookie': _cookie ?? ''};
 
-  final Dio _dio = Dio(BaseOptions(
-    connectTimeout: const Duration(seconds: 15),
-    receiveTimeout: const Duration(seconds: 15),
+  final Dio _dio = createNetworkClient(
     headers: _browserHeaders,
-    // Accept any status code (e.g. 405/500) so we can read the response
-    // body and log it for debugging instead of throwing DioException.
-    validateStatus: (status) => status != null && status >= 200 && status < 600,
-  ));
+  );
 
   final StorageService _storage;
   String? _cookie;

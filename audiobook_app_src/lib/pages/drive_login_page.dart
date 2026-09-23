@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
+import '../widgets/app_page_route.dart';
 import 'package:provider/provider.dart';
 import '../services/baidu_drive_service.dart';
 import '../services/cloud_drive_service.dart';
@@ -134,22 +134,6 @@ class _DriveLoginPageState extends State<DriveLoginPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (kIsWeb) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('网盘连接')),
-        body: const Center(
-          child: Padding(
-            padding: EdgeInsets.all(24),
-            child: Text(
-              '网盘功能需要在 Android/iOS 设备上使用。\n'
-              'Web 平台无法调用网盘接口。',
-              textAlign: TextAlign.center,
-            ),
-          ),
-        ),
-      );
-    }
-
     final baiduService = context.watch<BaiduDriveService>();
     final quarkService = context.watch<QuarkDriveService>();
 
@@ -277,7 +261,7 @@ class _DriveLoginPageState extends State<DriveLoginPage> {
                   onPressed: _loading
                       ? null
                       : () => context.pushThrottled(
-                            MaterialPageRoute(
+                            AppPageRoute(
                               builder: (_) => const QuarkWebLoginPage(),
                             ),
                           ),

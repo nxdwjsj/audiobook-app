@@ -184,7 +184,19 @@ class AudioPlayerService extends ChangeNotifier {
           _scheduleAdvanceRetry();
         }
       },
+      // 切后台 / 锁屏 / 被系统回收前必须补一次落盘。
+      // 原来只挂了 onResume，进程被强杀时会丢掉整个 debounce 周期
+      // （旧逻辑 5s）的播放进度与收听时长。
+      onPause: _flushOnLeave,
+      onHide: _flushOnLeave,
+      onDetach: _flushOnLeave,
     );
+  }
+
+  /// 离开前台时立即补写一次进度与统计。
+  void _flushOnLeave() {
+    if (_currentBook == null) return;
+    unawaited(_saveProgress());
   }
 
   // --- Getters ---
@@ -626,9 +638,11 @@ class AudioPlayerService extends ChangeNotifier {
       }
     } else if (_currentBook!.id.startsWith('local_')) {
       // Local imported books store the file path in chapter.filename
+      // 注意必须走 Uri.file：裸路径（/storage/.../x.mp3）用 Uri.parse
+      // 会得到无 scheme 的相对 URI，just_audio 无法加载（表现为导入后没声音）。
       try {
         loadedDuration = await _player.setAudioSource(
-          AudioSource.uri(Uri.parse(chapter.filename)),
+          AudioSource.uri(Uri.file(chapter.filename)),
         );
       } catch (e) {
         lastError = '加载音频失败: $e';
@@ -802,7 +816,7 @@ class AudioPlayerService extends ChangeNotifier {
 
     // Save progress periodically
     _progressSaveTimer?.cancel();
-    _progressSaveTimer = Timer(const Duration(seconds: 5), _saveProgress);
+    _progressSaveTimer = Timer(const Duration(seconds: 2), _saveProgress);
   }
 
   /// 当前章播到 80% 时预解析下一章（每章只触发一次）。

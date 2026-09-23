@@ -85,11 +85,8 @@ class WebViewFetcher {
   void Function(InAppWebViewController, WebUri?)? _onStop;
   void Function(String)? _onError;
 
-  /// 设备上没有 WebView 能力（单元测试/桌面）时返回 false。
-  static bool get isSupported =>
-      !kIsWeb &&
-      (defaultTargetPlatform == TargetPlatform.android ||
-          defaultTargetPlatform == TargetPlatform.iOS);
+  /// 单平台聚焦 Android：只在本平台可用。
+  static bool get isSupported => defaultTargetPlatform == TargetPlatform.android;
 
   /// 串行执行：同一时刻只跑一个抓取任务（并发加载既慢又容易触发风控）。
   Future<T> _serialize<T>(Future<T> Function() action) async {

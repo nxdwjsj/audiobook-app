@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
+import '../widgets/app_page_route.dart';
 import 'package:provider/provider.dart';
 import '../models/book.dart';
 import '../models/bookshelf_book.dart';
@@ -14,6 +16,7 @@ import '../services/audio_player_service.dart';
 import '../services/book_source/online_book_hit.dart';
 import '../services/local_import_service.dart';
 import '../services/storage_service.dart';
+import '../theme/app_tokens.dart';
 import '../widgets/frosted_glass.dart';
 import '../widgets/throttled_navigator.dart';
 import 'drive_browser_page.dart';
@@ -147,7 +150,7 @@ class _BookshelfPageState extends State<BookshelfPage> {
                         return _BookshelfItem(book: books[index]);
                       },
                       // 添加缓存扩展以提高滚动性能
-                      cacheExtent: 1000,
+                      scrollCacheExtent: const ScrollCacheExtent.pixels(1000),
                     ),
     );
   }
@@ -163,13 +166,14 @@ class _BookshelfPageState extends State<BookshelfPage> {
           _menuTile('drive', Icons.cloud_rounded, '打开网盘'),
           _menuTile('local', Icons.download_rounded, '导入本地音频'),
           _menuTile('layout', Icons.grid_view_rounded, '书架布局'),
+          _menuTile('motion', Icons.animation_rounded, '减弱动效'),
           if (bookCount > 1)
             _menuTile('sort', Icons.swap_vert_rounded, '排序书架'),
           const SizedBox(height: 8),
         ],
       ),
     );
-    if (action == null || !mounted) return;
+    if (action == null || !context.mounted) return;
     await _onMenuSelected(context, action);
   }
 
@@ -202,14 +206,14 @@ class _BookshelfPageState extends State<BookshelfPage> {
         break;
       case 'search':
         context.pushThrottled(
-          MaterialPageRoute(builder: (_) => const ResourceSearchPage()),
+          AppPageRoute(builder: (_) => const ResourceSearchPage()),
         );
         break;
       case 'sort':
         setState(() => _reordering = true);
         break;
       case 'drive':
-        context.pushThrottled(MaterialPageRoute(
+        context.pushThrottled(AppPageRoute(
           builder: (_) => const DriveBrowserPage(
             initialDrive: DriveType.quark,
           ),
@@ -218,7 +222,22 @@ class _BookshelfPageState extends State<BookshelfPage> {
       case 'local':
         await _importLocalFile(context);
         break;
+      case 'motion':
+        await _toggleReduceMotion(context);
+        break;
     }
+  }
+
+  /// 「减弱动效」开关：低端设备把全局时长压缩 45%、曲线退化为线性。
+  Future<void> _toggleReduceMotion(BuildContext context) async {
+    final storage = context.read<StorageService>();
+    final next = !storage.getReduceMotion();
+    await storage.saveReduceMotion(next);
+    AppMotion.lowPerformance = next;
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(next ? '已开启减弱动效' : '已恢复完整动效')),
+    );
   }
 
   Future<void> _importLocalFile(BuildContext context) async {
@@ -586,7 +605,7 @@ class _BookshelfItemState extends State<_BookshelfItem> {
     final progressRepo = context.read<ProgressRepository>();
     switch (action) {
       case 'open':
-        context.pushThrottled(MaterialPageRoute(
+        context.pushThrottled(AppPageRoute(
           builder: (_) => DriveBrowserPage(
             initialDrive: book.driveType,
             initialPath: book.drivePath,
@@ -701,7 +720,7 @@ class _BookshelfItemState extends State<_BookshelfItem> {
 
   /// 点击书籍：进入书籍详情页（信息 + 目录 + 正在播放定位）。
   void _openBook(BuildContext context) {
-    context.pushThrottled(MaterialPageRoute(
+    context.pushThrottled(AppPageRoute(
       builder: (_) => ShelfBookDetailPage(book: book),
     ));
   }

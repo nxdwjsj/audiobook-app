@@ -22,6 +22,9 @@ class BookSourceRepository extends ChangeNotifier {
 
   static const String _customKey = 'custom_book_sources';
   static const String _disabledKey = 'disabled_book_sources';
+  /// 已记录过的内置源 id。随版本新增的内置源默认开启一次，
+  /// 之后完全尊重用户的手动开关，升级不会把用户关掉的源再打开。
+  static const String _knownKey = 'known_builtin_source_ids';
 
   List<BookSource> _custom = [];
   Set<String> _disabled = {};
@@ -78,9 +81,28 @@ class BookSourceRepository extends ChangeNotifier {
       if (dis is List) {
         _disabled = dis.map((e) => e.toString()).toSet();
       }
+      // 首次安装 / 升级：新出现的内置源默认启用。
+      // 只处理"第一次见到"的 id，用户此前手动关掉的源不受影响。
+      await _applyDefaultEnabledPolicy();
     } catch (e) {
       debugPrint('[BookSource] load 失败: $e');
     }
+  }
+
+  /// 默认启用策略：把所有尚未登记过的内置源移出禁用列表，然后登记。
+  /// 幂等 —— 重复调用不会再打开用户之后关掉的源。
+  Future<void> _applyDefaultEnabledPolicy() async {
+    final rawKnown = _storage.config.get(_knownKey);
+    final known = rawKnown is List ? rawKnown.map((e) => e.toString()).toSet() : <String>{};
+    final newIds = kBuiltinSourceIds.where((id) => !known.contains(id)).toList();
+    if (newIds.isEmpty) return;
+    for (final id in newIds) {
+      _disabled.remove(id);
+      known.add(id);
+    }
+    await _storage.config.put(_knownKey, known.toList());
+    await _saveDisabled();
+    debugPrint('[BookSource] 默认启用新内置源: ${newIds.join(', ')}');
   }
 
   Future<void> _saveCustom() async {

@@ -1,5 +1,5 @@
 ﻿import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
+import '../widgets/app_page_route.dart';
 import 'package:provider/provider.dart';
 import '../models/drive_item.dart';
 import '../models/book.dart';
@@ -393,22 +393,6 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (kIsWeb) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('网盘')),
-        body: const Center(
-          child: Padding(
-            padding: EdgeInsets.all(24),
-            child: Text(
-              '网盘功能需要在 Android/iOS 设备上使用。\n'
-              'Web 平台无法调用网盘接口。',
-              textAlign: TextAlign.center,
-            ),
-          ),
-        ),
-      );
-    }
-
     final baiduAuth = context.watch<BaiduDriveService>().authStatus;
     final quarkAuth = context.watch<QuarkDriveService>().authStatus;
     final currentAuth =
@@ -437,7 +421,7 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
             tooltip: '网盘设置',
             onPressed: () {
               context.pushThrottled(
-                  MaterialPageRoute(builder: (_) => const DriveLoginPage()));
+                  AppPageRoute(builder: (_) => const DriveLoginPage()));
             },
           ),
         ],
@@ -681,7 +665,7 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
               const SizedBox(height: 16),
               FilledButton.icon(
                 onPressed: () {
-                  context.pushThrottled(MaterialPageRoute(
+                  context.pushThrottled(AppPageRoute(
                       builder: (_) => const DriveLoginPage()));
                 },
                 icon: const Icon(Icons.login),

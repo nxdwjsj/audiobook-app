@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:ui';
+
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -19,29 +22,116 @@ import 'services/cloud_drive_service.dart';
 import 'services/resource_search_service.dart';
 import 'services/storage_service.dart';
 import 'theme/app_theme.dart';
+import 'theme/app_tokens.dart';
 import 'widgets/floating_player_ball.dart';
 import 'widgets/throttled_navigator.dart' show appNavigatorKey;
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+/// 统一的错误出口：后续接崩溃落文件时只需改这一处。
+void reportError(Object error, StackTrace stack, {String tag = 'Error'}) {
+  debugPrint('[$tag] $error');
+  debugPrint('[$tag] 堆栈:\n$stack');
+}
 
-  // 框架内部异常（红屏）默认不会把堆栈打到 logcat，这里显式打出来，
-  // 否则真机上出问题只能看到红屏、拿不到堆栈。
-  FlutterError.onError = (details) {
-    debugPrint('[FlutterError] ${details.exceptionAsString()}');
-    debugPrint('[FlutterError] 上下文: ${details.context}');
-    debugPrint('[FlutterError] 堆栈:\n${details.stack}');
-    FlutterError.presentError(details);
-  };
+Future<void> main() async {
+  await runZonedGuarded(
+    () async {
+      WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize local storage
-  try {
-    await StorageService.init();
-  } catch (e) {
-    debugPrint('Storage init failed: $e');
+      // 框架内部异常（红屏）默认不会把堆栈打到 logcat，这里显式打出来，
+      // 否则真机上出问题只能看到红屏、拿不到堆栈。
+      FlutterError.onError = (details) {
+        reportError(details.exceptionAsString(), details.stack ?? StackTrace.current,
+            tag: 'FlutterError');
+        FlutterError.presentError(details);
+      };
+      // 原生层 / 插件抛出的异步异常不经过 FlutterError，必须单独接管。
+      PlatformDispatcher.instance.onError = (error, stack) {
+        reportError(error, stack, tag: 'Platform');
+        return true;
+      };
+
+      // Initialize local storage
+      Object? storageError;
+      for (var attempt = 0; attempt < 2; attempt++) {
+        try {
+          await StorageService.init();
+          storageError = null;
+          break;
+        } catch (e, st) {
+          storageError = e;
+          reportError(e, st, tag: 'StorageInit');
+          await Future<void>.delayed(const Duration(milliseconds: 120));
+        }
+      }
+
+      // 存储不可用时不静默继续：宁可给一个明确的错误页，也不要让用户
+      // 在"书架莫名变空、写了不生效"的黑盒里排查。
+      if (storageError != null || !StorageService.isStorageReady) {
+        runApp(StorageFailureApp(error: storageError));
+        return;
+      }
+
+      final storage = StorageService();
+
+      // 动效降级：用户在设置里开启后，全局时长按比例压缩、曲线退化为线性。
+      AppMotion.lowPerformance = storage.getReduceMotion();
+
+      await bootstrapApp(storage);
+    },
+    (error, stack) => reportError(error, stack, tag: 'Zone'),
+  );
+}
+
+/// 本地存储不可用时的兜底界面，提供重试。
+class StorageFailureApp extends StatelessWidget {
+  const StorageFailureApp({super.key, this.error});
+
+  final Object? error;
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: '聆云',
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.lightTheme(),
+      darkTheme: AppTheme.darkTheme(),
+      themeMode: ThemeMode.system,
+      home: Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.storage_rounded, size: 48),
+                const SizedBox(height: 16),
+                const Text(
+                  '本地存储初始化失败',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '书架、进度与登录状态都无法读写。\n'
+                  '请确认设备存储空间充足后重试。\n\n$error',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                FilledButton(
+                  onPressed: () async {
+                    await main();
+                  },
+                  child: const Text('重试'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
+}
 
-  final storage = StorageService();
+Future<void> bootstrapApp(StorageService storage) async {
 
   // ProgressRepository 需要先创建，传给 AudioPlayerService（AudioHandler）
   final progressRepo = ProgressRepository(storage);
@@ -73,7 +163,8 @@ void main() async {
   final sessionRepo = ListenSessionRepository(storage);
   final statsRepo = StatsRepository(storage);
 
-  // 书源：内置 5 源 + 用户自定义/导入（全网搜书的发现渠道）
+  // 书源：内置源（3 个在线听书站 + 5 个网盘分享发现）+ 用户自定义/导入。
+  // 首次安装或随版本新增的内置源默认启用，用户手动开关会被持久化保留。
   final bookSourceRepo = BookSourceRepository(storage);
   await bookSourceRepo.load();
 

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'app_page_route.dart';
 
 import '../pages/player_page.dart';
 
@@ -31,6 +32,6 @@ extension ThrottledNavigator on BuildContext {
     if (PlayerPage.isShown) return;
     _lastPush = now;
     appNavigatorKey.currentState
-        ?.push(MaterialPageRoute(builder: (_) => const PlayerPage()));
+        ?.push(AppPageRoute(builder: (_) => const PlayerPage()));
   }
 }
