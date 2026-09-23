@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:provider/provider.dart';
 
-import '../services/drive_list_cache.dart';
 import '../services/quark_drive_service.dart';
 
 /// 通过内置 WebView 打开夸克官方登录页，登录完成后自动读取 Cookie。
@@ -187,10 +186,9 @@ class _QuarkWebLoginPageState extends State<QuarkWebLoginPage> {
       final cookieString =
           cookies.entries.map((e) => '${e.key}=${e.value}').join('; ');
 
-      // 交给 service 校验，通过才会落盘；不通过会抛错
+      // 交给 service 校验，通过才会落盘；不通过会抛错。
+      // 目录缓存的失效由 service 内部处理（见 QuarkDriveService.setCookie）。
       await service.setCookie(cookieString);
-      // 换账号后目录缓存必须失效，避免 60 秒 TTL 内看到上一个账号的列表
-      DriveListCache.instance.clear();
 
       if (!mounted) return;
       Navigator.of(context).pop(true);

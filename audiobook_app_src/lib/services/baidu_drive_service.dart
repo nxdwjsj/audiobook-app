@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/drive_item.dart';
 import 'cloud_drive_service.dart';
+import 'drive_list_cache.dart';
 import 'http/network_client.dart';
 import 'storage_service.dart';
 
@@ -233,6 +234,12 @@ class BaiduDriveService extends ChangeNotifier implements CloudDriveService {
 
   /// Set the access token manually (user pasted from browser).
   /// Validates the token before persisting/marking as authenticated.
+  /// 凭据变动后清空目录缓存。
+  ///
+  /// 与夸克侧同理：目录缓存是全局单例，清缓存收在 service 内部（凭据的唯一
+  /// 写入口）才不会因某个页面漏清而让新账号看到上一个账号的目录。
+  void _dropListCache() => DriveListCache.instance.clear();
+
   Future<void> setAccessToken(String token) async {
     final trimmed = token.trim();
     final previous = _accessToken;
@@ -243,6 +250,7 @@ class BaiduDriveService extends ChangeNotifier implements CloudDriveService {
       _authStatus = _cookie != null && _cookie!.isNotEmpty
           ? AuthStatus.authenticated
           : AuthStatus.unauthenticated;
+      _dropListCache();
       notifyListeners();
       return;
     }
@@ -252,6 +260,7 @@ class BaiduDriveService extends ChangeNotifier implements CloudDriveService {
       await getAccountInfo(); // throws when the token is invalid
       await _storage.saveBaiduToken(trimmed); // persist only on success
       _authStatus = AuthStatus.authenticated;
+      _dropListCache();
       notifyListeners();
     } catch (e) {
       // Roll back so a bad token is never saved (otherwise the next launch
@@ -281,6 +290,7 @@ class BaiduDriveService extends ChangeNotifier implements CloudDriveService {
       _authStatus = _accessToken != null && _accessToken!.isNotEmpty
           ? AuthStatus.authenticated
           : AuthStatus.unauthenticated;
+      _dropListCache();
       notifyListeners();
       return;
     }
@@ -290,6 +300,7 @@ class BaiduDriveService extends ChangeNotifier implements CloudDriveService {
       await _probeCookie();
       await _storage.saveBaiduCookie(trimmed);
       _authStatus = AuthStatus.authenticated;
+      _dropListCache();
       notifyListeners();
     } catch (e) {
       _cookie = previous;
@@ -310,6 +321,7 @@ class BaiduDriveService extends ChangeNotifier implements CloudDriveService {
     await _storage.saveBaiduToken('');
     await _storage.saveBaiduCookie('');
     _authStatus = AuthStatus.unauthenticated;
+    _dropListCache();
     notifyListeners();
   }
 

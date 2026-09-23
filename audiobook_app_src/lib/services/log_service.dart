@@ -82,11 +82,21 @@ class LogService {
   static final RegExp _urlPattern = RegExp(r'''https?://[^\s"'<>)\]}]+''');
 
   /// 匹配 `cookie=...` / `Authorization: Bearer ...` / `stoken=...` 之类的键值。
-  /// 第三个分组单独吃掉 `Bearer` / `Basic` 前缀，否则 `Authorization: Bearer xxx`
-  /// 只会打码到 `Bearer` 而把真正的 token 留在日志里。
+  ///
+  /// 三个细节缺一不可：
+  /// - 键名**两侧允许出现引号**：JSON 里是 `"stoken":"xxx"`，键名后面紧跟的是
+  ///   闭合引号而不是分隔符。早先的正则要求键名后**直接**是 `:` 或 `=`，于是
+  ///   所有 JSON 形态（`{"stoken":"..."}`、`{"cookie":"..."}`）全部漏过、原样
+  ///   落进日志（实测确认）。
+  /// - 值**外侧的引号也要吃进去**，否则会留下半截引号把日志搞乱。
+  /// - `Bearer` / `Basic` 前缀单独匹配，否则 `Authorization: Bearer xxx`
+  ///   只会打码到 `Bearer`，真正的 token 留在日志里。
+  ///
+  /// 分组：1 键前引号、2 键名、3 键后引号、4 分隔符、5 值前引号、6 值、7 值后引号。
   static final RegExp _secretAssignment = RegExp(
+    r'''(["']?)'''
     r'(cookie|authorization|set-cookie|bduss|stoken|access[_-]?token|appkey)'
-    r'\s*[:=]\s*(?:bearer\s+|basic\s+)?([^\s,;]+)',
+    r'''(["']?)(\s*[:=]\s*)(?:(?:bearer|basic)\s+)?(["']?)([^"'\s,;]+)(["']?)''',
     caseSensitive: false,
   );
 
@@ -94,7 +104,7 @@ class LogService {
   ///
   /// - URL：丢弃 **查询串的值**（`download_url` 的时效签名、`x-oss-expires`、
   ///   `stoken` 都在这里）与 fragment，保留 scheme / host / path / 参数名。
-  /// - 键值：`Cookie=xxx`、`Authorization: xxx` 之类整体打码。
+  /// - 键值：`Cookie=xxx`、`Authorization: xxx`、JSON 的 `"stoken":"xxx"` 均整体打码。
   ///
   /// 这个方法是纯函数，方便单测覆盖。
   static String sanitize(String raw) {
@@ -104,7 +114,10 @@ class LogService {
     );
     out = out.replaceAllMapped(
       _secretAssignment,
-      (m) => '${m.group(1)}=<redacted>',
+      // 保留键与值两侧的引号、以及原分隔符（`:` 或 `=`），只把值换成占位符，
+      // 这样 JSON 形态脱敏后仍是合法形态，日志可读性不塌。
+      (m) => '${m.group(1)}${m.group(2)}${m.group(3)}'
+          '${m.group(4)}${m.group(5)}<redacted>${m.group(7)}',
     );
     return out;
   }

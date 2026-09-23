@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import '../models/drive_item.dart';
 import 'cloud_drive_service.dart';
+import 'drive_list_cache.dart';
 import 'http/network_client.dart';
 import 'storage_service.dart';
 
@@ -211,6 +212,13 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
   /// Validates against the account API BEFORE persisting, so an invalid
   /// cookie is never saved (otherwise the next launch would wrongly show
   /// "authenticated"). Throws on failure so the UI can report the error.
+  /// 凭据变动后清空目录缓存。
+  ///
+  /// 刻意放在 service 内部，而不是各调用页面：目录缓存是**全局单例**，
+  /// 只要有一个页面漏了清，新账号就会在 60 秒 TTL 内看到上一个账号的目录。
+  /// 而凭据的写入/清除只有本类这一处入口，收在这里就不存在遗漏面。
+  void _dropListCache() => DriveListCache.instance.clear();
+
   Future<void> setCookie(String cookie) async {
     final trimmed = cookie.trim();
     final previous = _cookie;
@@ -223,6 +231,7 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
       _cookie = null;
       await _storage.saveQuarkCookie('');
       _authStatus = AuthStatus.unauthenticated;
+      _dropListCache();
       notifyListeners();
       return;
     }
@@ -232,6 +241,8 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
       await _validateCookie();
       await _storage.saveQuarkCookie(trimmed); // persist only after success
       _authStatus = AuthStatus.authenticated;
+      // 换账号成功：上一个账号的目录缓存必须失效
+      _dropListCache();
       notifyListeners();
     } catch (e) {
       // Restore the previous state so a typo cannot log the user out.
@@ -257,6 +268,8 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
     _shareInboxFid = null;
     _authFailureDetected = false;
     _authStatus = AuthStatus.unauthenticated;
+    // 登出即换账号场景之一，目录缓存同样要失效
+    _dropListCache();
     notifyListeners();
   }
 
@@ -280,6 +293,21 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
   /// Covers: non-JSON body, HTTP-level errors (405/500...), and
   /// business-level errors (code != 0).
   ///
+  /// 判断一个响应是否「不可用」，需要交给 [_throwApiError] 处理。
+  ///
+  /// 三条判据任一成立即算：响应体不是本服务 JSON、业务码非 0、
+  /// **或 HTTP 状态码本身表示需要重新连接**。
+  ///
+  /// 第三条是必要的补漏：服务端可能返回「HTTP 412 但响应体里 code=0」这种组合。
+  /// 它既不是非 JSON、业务码又是 0，只看前两条会被当成成功响应放过去，直到取
+  /// `data` 拿到 null 才报「未返回下载链接」——而登录态始终没被标记，UI 就一直
+  /// 停在「已连接」。统一走这里，各调用点就不会再各自漏判。
+  bool _isBadResponse(Response response) {
+    if (isAuthExpiredStatus(response.statusCode ?? -1)) return true;
+    final data = response.data;
+    return data is! Map || data['code'] != 0;
+  }
+
   /// 每条失败路径都会先过一遍登录态判定（[_handleAuthError]）：
   /// 此前 non-JSON 分支直接 throw，HTTP 412 与 HTML 登录页这类「响应体不是
   /// 本服务 JSON」的失效场景根本走不到判定，UI 就一直停在「已连接」。
@@ -379,7 +407,7 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
       );
 
       final data = response.data;
-      if (data is! Map || data['code'] != 0) {
+      if (_isBadResponse(response)) {
         _throwApiError('file/sort', response);
       }
       _logHttp('file/sort p$page', response);
@@ -425,7 +453,7 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
       );
 
       final data = response.data;
-      if (data is! Map || data['code'] != 0) {
+      if (_isBadResponse(response)) {
         _throwApiError('resolvePath', response);
       }
 
@@ -480,7 +508,7 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
     );
 
     final data = response.data;
-    if (data is! Map || data['code'] != 0) {
+    if (_isBadResponse(response)) {
       _throwApiError('file/search', response);
     }
     _logHttp('file/search', response);
@@ -525,7 +553,7 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
     );
 
     final data = response.data;
-    if (data is! Map || data['code'] != 0) {
+    if (_isBadResponse(response)) {
       _throwApiError('sharepage/token', response);
     }
     _logHttp('sharepage/token', response);
@@ -567,7 +595,7 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
     );
 
     final detail = detailResp.data;
-    if (detail is! Map || detail['code'] != 0) {
+    if (_isBadResponse(detailResp)) {
       _throwApiError('sharepage/detail', detailResp);
     }
     _logHttp('sharepage/detail', detailResp);
@@ -631,7 +659,7 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
         options: Options(headers: _authHeaders),
       );
       final data = resp.data;
-      if (data is! Map || data['code'] != 0) {
+      if (_isBadResponse(resp)) {
         _throwApiError('sharepage/detail', resp);
       }
       title ??= data['data']?['title']?.toString();
@@ -843,7 +871,7 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
       options: Options(headers: _authHeaders),
     );
     final data = resp.data;
-    if (data is! Map || data['code'] != 0) {
+    if (_isBadResponse(resp)) {
       _throwApiError('sharepage/save', resp);
     }
     _logHttp('sharepage/save', resp);
@@ -928,7 +956,7 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
         options: Options(headers: _authHeaders),
       );
       final data = resp.data;
-      if (data is! Map || data['code'] != 0) {
+      if (_isBadResponse(resp)) {
         _throwApiError('task', resp);
       }
       final status = (data['data']?['status'] as num?)?.toInt();
@@ -1046,7 +1074,7 @@ class QuarkDriveService extends ChangeNotifier implements CloudDriveService {
     );
 
     final data = response.data;
-    if (data is! Map || data['code'] != 0) {
+    if (_isBadResponse(response)) {
       _throwApiError('file/download', response);
     }
     _logHttp('file/download', response);

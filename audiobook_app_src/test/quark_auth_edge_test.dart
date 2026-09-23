@@ -284,12 +284,16 @@ void main() {
       expect(s.authStatus, AuthStatus.expired);
     });
 
-    test('取直链 412 + JSON body（code=0, 无 data）：仅报「未返回下载链接」，不置 expired',
+    test('取直链 412 + JSON body（code=0, 无 data）：补失效判定后置 expired',
         () async {
-      // 记录当前行为：412 但响应体是 {code:0} 的怪异形态下，getAudioStreamUrl
-      // 不会走 _throwApiError（因为 code==0），因此不更新登录态。
-      // 真实 CDN 的 412 是纯文本（走 data is! Map 分支，已覆盖），故风险低；
-      // 此处固化现状，若将来在此处补失效判定，本用例需同步更新。
+      // 2026-09-24 行为变更（主理人复核阶段，team-lead 直接修改）：
+      // 原实现仅在 `code != 0` 时才调用 _throwApiError，于是「HTTP 412 但响应体
+      // code=0」这种组合被当成成功响应放过去，只报「未返回下载链接」，
+      // 登录态始终没被标记。本用例此前把该缺口固化为 authenticated。
+      //
+      // 现已在 QuarkDriveService 引入统一的 _isBadResponse 判定——状态码命中
+      // 401/403/412 即视为「不可用」，9 个调用点全部改走它，缺口闭合。
+      // 因此断言相应更新为 expired（旧断言的前提已不成立）。
       final s = await authed(
         (o) => _json(o, status: 412, data: {'code': 0}),
       );
@@ -297,7 +301,8 @@ void main() {
         s.getAudioStreamUrl('fid'),
         throwsA(isA<Exception>()),
       );
-      expect(s.authStatus, AuthStatus.authenticated);
+      expect(s.authStatus, AuthStatus.expired,
+          reason: '412 但 body code=0 被漏判，登录态没被标记');
     });
   });
 
