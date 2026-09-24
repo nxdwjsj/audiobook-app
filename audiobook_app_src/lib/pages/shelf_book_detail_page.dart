@@ -14,6 +14,7 @@ import '../services/audio_player_service.dart';
 import '../services/book_source/online_book_hit.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
+import '../theme/app_tokens.dart';
 import '../widgets/book_cover.dart';
 import '../widgets/throttled_navigator.dart';
 import 'drive_browser_page.dart';
@@ -275,10 +276,7 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
               trailing: isPlayingChapter
                   ? Text(
                       '正在播放',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: primary,
-                      ),
+                      style: AppType.micro.copyWith(color: primary),
                     )
                   : null,
               onTap: () => _playChapter(context, chapterIndex),
@@ -350,37 +348,51 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
     );
   }
 
+  /// 详情页头部（设计规范 §5：封面为主角，文字层级靠字号与颜色对比建立）。
+  ///
+  /// 此前标题用 `FontWeight.bold`，与规范「只用 400/500 两种字重」冲突；
+  /// 字号与颜色也都是硬编码的 theme 复制，换主题时会脱节。现统一走令牌。
   Widget _buildHeader(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Padding(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(AppSpacing.lg),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildCover(context),
-          const SizedBox(width: 16),
+          const SizedBox(width: AppSpacing.lg),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
                   _book.title,
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppType.title.copyWith(
+                    color: AppInk.primary(isDark),
+                  ),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: AppSpacing.sm),
                 Text(
                   _book.author ?? '未知作者',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  // 作者署名用正文级：它是「谁演播的」，是用户选书的关键信息，
+                  // 不该退化成灰色小字。
+                  style: AppType.body.copyWith(
+                    color: AppInk.secondary(isDark),
+                  ),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: AppSpacing.xs),
                 Text(
                   '${_book.chapterCount} 集 · ${_sourceLabel()}',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppType.caption.copyWith(
+                    color: AppInk.tertiary(isDark),
+                  ),
                 ),
               ],
             ),
@@ -421,8 +433,9 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
   /// 现在全部收敛到 BookCover，封面观感在书架与详情之间保持连续。
   Widget _buildCover(BuildContext context) {
     return SizedBox(
+      // 规范 §4：封面统一 3:4 竖版
       width: 120,
-      height: 170,
+      height: 160,
       child: BookCover(
         title: _book.title,
         author: _book.author,

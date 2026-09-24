@@ -1,3 +1,5 @@
+import 'dart:math' show pow;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:audiobook_app/theme/app_tokens.dart';
@@ -152,6 +154,86 @@ void main() {
       // 竖排文本是用 \n 连接的字素，不是原串
       expect(find.text('这\n是\n一\n本'), findsOneWidget);
       expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('无障碍：文字对比度必须达到 WCAG AA', () {
+    // 规范 §8：正文 ≥ 4.5:1。这里把算法实现一份，避免将来改色板时
+    // 悄悄退化 —— 曾经 tertiary 用 #9E9E9E，在纸白底上只有 2.56:1，
+    // 而它大量用在 11px 的 micro 文本上。
+    double channel(double c) =>
+        c <= 0.03928 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4).toDouble();
+
+    double luminance(Color color) {
+      // 新 API 的 .r/.g/.b 已经是 0..1，不要再除以 255
+      // （旧的 .red/.green/.blue 已废弃）。
+      return 0.2126 * channel(color.r) +
+          0.7152 * channel(color.g) +
+          0.0722 * channel(color.b);
+    }
+
+    double contrast(Color a, Color b) {
+      final l1 = luminance(a);
+      final l2 = luminance(b);
+      final hi = l1 > l2 ? l1 : l2;
+      final lo = l1 > l2 ? l2 : l1;
+      return (hi + 0.05) / (lo + 0.05);
+    }
+
+    Color blend(Color fg, Color bg, double alpha) {
+      int mix(double a, double b) =>
+          ((a * alpha + b * (1 - alpha)) * 255.0).round().clamp(0, 255).toInt();
+      return Color.fromARGB(255, mix(fg.r, bg.r), mix(fg.g, bg.g),
+          mix(fg.b, bg.b));
+    }
+
+    const lightBg = Color(0xFFFAFAF8);
+    const darkBg = Color(0xFF141414);
+
+    test('浅色模式三档文字色均 ≥ 4.5:1', () {
+      expect(contrast(AppInk.primary(false), lightBg), greaterThanOrEqualTo(4.5));
+      expect(contrast(AppInk.secondary(false), lightBg), greaterThanOrEqualTo(4.5));
+      // 这一条曾经失败（#9E9E9E = 2.56:1）
+      expect(contrast(AppInk.tertiary(false), lightBg), greaterThanOrEqualTo(4.5));
+      expect(contrast(AppInk.accent(false), lightBg), greaterThanOrEqualTo(4.5));
+    });
+
+    test('深色模式三档文字色均 ≥ 4.5:1', () {
+      expect(contrast(AppInk.primary(true), darkBg), greaterThanOrEqualTo(4.5));
+      expect(contrast(AppInk.secondary(true), darkBg), greaterThanOrEqualTo(4.5));
+      // 这一条曾经失败（#707070 = 3.72:1）
+      expect(contrast(AppInk.tertiary(true), darkBg), greaterThanOrEqualTo(4.5));
+      // 强调色在深色底上必须换成更亮的一档（同色仅 3.01:1）
+      expect(contrast(AppInk.accent(true), darkBg), greaterThanOrEqualTo(4.5));
+    });
+
+    test('文字层级在两种模式下都单调（primary 最亮对比、tertiary 最低）', () {
+      for (final isDark in [false, true]) {
+        final bg = isDark ? darkBg : lightBg;
+        final p = contrast(AppInk.primary(isDark), bg);
+        final s = contrast(AppInk.secondary(isDark), bg);
+        final t = contrast(AppInk.tertiary(isDark), bg);
+        expect(p > s, isTrue, reason: 'isDark=$isDark primary 应强于 secondary');
+        expect(s > t, isTrue, reason: 'isDark=$isDark secondary 应强于 tertiary');
+      }
+    });
+
+    test('生成封面：书名与作者行在全部 8 个出版色上均 ≥ 4.5:1', () {
+      const ink = AppCoverPalette.ink;
+      // 与 widgets/book_cover.dart 中的实际取值保持一致
+      const authorAlpha = 0.95;
+      for (final bg in AppCoverPalette.colors) {
+        expect(
+          contrast(ink, bg),
+          greaterThanOrEqualTo(4.5),
+          reason: '封面色 $bg 上的书名字对比度不足',
+        );
+        expect(
+          contrast(blend(ink, bg, authorAlpha), bg),
+          greaterThanOrEqualTo(4.5),
+          reason: '封面色 $bg 上的作者行对比度不足（透明度 $authorAlpha）',
+        );
+      }
     });
   });
 

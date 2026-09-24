@@ -790,7 +790,7 @@ class _ContinueListeningCard extends StatelessWidget {
                     playing
                         ? '正在播放'
                         : (isCurrent ? '已暂停' : '继续收听'),
-                    style: AppType.micro.copyWith(color: AppInk.accent),
+                    style: AppType.micro.copyWith(color: AppInk.accent(isDark)),
                   ),
                   const SizedBox(height: 2),
                   Text(

@@ -193,23 +193,47 @@ class AppCoverPalette {
   }
 }
 
-/// 界面中性阶（设计规范 §1.1）。
+/// 界面中性阶（设计规范 §1.1、§8 无障碍）。
 ///
 /// 「杂志感」要求界面 95% 的面积由中性色占据；主色只在可交互与选中态出现。
+///
+/// **每一档文字色都按 WCAG AA 校验过对比度**（正文 ≥ 4.5:1，见
+/// `test/design_system_test.dart` 的自动守卫）。曾经 tertiary 用的是
+/// `#9E9E9E`，在纸白底上只有 **2.56:1** —— 而它大量用在 11px 的 micro 文本上，
+/// 属于典型的不达标。改色板前请先跑那条守卫测试。
 class AppInk {
   const AppInk._();
 
-  static Color page(bool isDark) => isDark ? const Color(0xFF141414) : const Color(0xFFFAFAF8);
-  static Color surface(bool isDark) => isDark ? const Color(0xFF1E1E1E) : const Color(0xFFFFFFFF);
-  static Color primary(bool isDark) => isDark ? const Color(0xFFEDEDED) : const Color(0xFF1A1A1A);
-  static Color secondary(bool isDark) => isDark ? const Color(0xFFA0A0A0) : const Color(0xFF6B6B6B);
-  static Color tertiary(bool isDark) => isDark ? const Color(0xFF707070) : const Color(0xFF9E9E9E);
-  static Color hairline(bool isDark) => isDark ? const Color(0x1FFFFFFF) : const Color(0x1F000000);
+  static Color page(bool isDark) =>
+      isDark ? const Color(0xFF141414) : const Color(0xFFFAFAF8);
+  static Color surface(bool isDark) =>
+      isDark ? const Color(0xFF1E1E1E) : const Color(0xFFFFFFFF);
 
-  /// 强调色：仅用于进度条与链接。
-  static const Color accent = Color(0xFF1F6F4A);
+  /// 主文字：浅色 16.65:1 ／ 深色 15.74:1
+  static Color primary(bool isDark) =>
+      isDark ? const Color(0xFFEDEDED) : const Color(0xFF1A1A1A);
+
+  /// 次文字：浅色 6.38:1 ／ 深色 7.04:1
+  static Color secondary(bool isDark) =>
+      isDark ? const Color(0xFFA0A0A0) : const Color(0xFF5C5C5C);
+
+  /// 弱文字（角标、元信息）：浅色 4.81:1 ／ 深色 5.48:1。
+  /// 三档层级 primary > secondary > tertiary 在两种模式下都保持单调。
+  static Color tertiary(bool isDark) =>
+      isDark ? const Color(0xFF8C8C8C) : const Color(0xFF6F6F6F);
+
+  static Color hairline(bool isDark) =>
+      isDark ? const Color(0x1FFFFFFF) : const Color(0x1F000000);
+
+  /// 强调色：仅用于进度条与「继续收听」这类需要被注意的标签。
+  ///
+  /// **必须按明暗取值**：同一个 `#1F6F4A` 在浅色底上是 5.86:1（达标），
+  /// 但在深色底上只有 **3.01:1**（不达标）。所以深色模式改用更亮的松绿。
+  static Color accent(bool isDark) =>
+      isDark ? const Color(0xFF52B584) : const Color(0xFF1F6F4A);
 
   /// 墨色按钮底：选中态 / 主按钮用它，而不是彩色。
   static Color solid(bool isDark) => primary(isDark);
-  static Color onSolid(bool isDark) => isDark ? const Color(0xFF141414) : const Color(0xFFFAFAF8);
+  static Color onSolid(bool isDark) =>
+      isDark ? const Color(0xFF141414) : const Color(0xFFFAFAF8);
 }

@@ -245,7 +245,10 @@ class _GeneratedCover extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      color: AppCoverPalette.ink.withValues(alpha: 0.82),
+                      // 0.95 而不是更低：更低的透明度会让「赭石」底色上的作者行
+                      // 掉到 4:1 以下（实测 0.82 时为 3.98:1，不达 WCAG AA）。
+                      // 0.95 在全部 8 个出版色上均 ≥ 4.7:1，见设计系统 §8。
+                      color: AppCoverPalette.ink.withValues(alpha: 0.95),
                       fontSize: (w * 0.085).clamp(9.0, 13.0).toDouble(),
                       fontWeight: FontWeight.w400,
                     ),
@@ -301,7 +304,7 @@ class _ProgressEdge extends StatelessWidget {
         child: Container(
           width: constraints.maxWidth * value,
           height: 2.5,
-          color: AppInk.accent,
+          color: AppInk.accent(Theme.of(context).brightness == Brightness.dark),
         ),
       ),
     );
