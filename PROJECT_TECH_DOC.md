@@ -1,7 +1,7 @@
 # 聆云（audiobook_app）项目技术文档
 
 > 项目路径：`D:\Project\TraeWorkspace\audiobook\audiobook_app_src`
-> 当前版本：`1.1.3+23`（发布 APK 仅 arm64）
+> 当前版本：`1.1.4+24`（发布 APK 仅 arm64）
 
 ---
 
@@ -225,7 +225,7 @@ audiobook_app_src/
 name: audiobook_app
 description: 聆云 - 网盘有声书播放器（直接播放网盘音频文件夹，管理目录、进度与收听历史）
 publish_to: 'none'
-version: 1.1.3+23
+version: 1.1.4+24
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

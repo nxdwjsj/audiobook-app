@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../models/book.dart';
 import '../models/bookshelf_book.dart';
 import '../models/drive_item.dart';
+import '../models/playback_progress.dart';
 import '../repositories/bookshelf_repository.dart';
 import '../repositories/book_source_repository.dart';
 import '../repositories/progress_repository.dart';
@@ -99,58 +100,67 @@ class _BookshelfPageState extends State<BookshelfPage> {
             ),
         ],
       ),
+      // 「继续收听」放在列表上方且不随列表滚动：
+      // 用户 90% 的使用是「接着上次听」，把它做成常驻动作而不是要找的东西。
+      // 没有收听记录时该卡整块不显示（规范 §5.2：不显示空状态占位）。
       body: books.isEmpty
           ? const _EmptyBookshelf()
-          : _reordering
-              ? ReorderableListView.builder(
-                  // ignore: deprecated_member_use
-                  onReorder: (oldIndex, newIndex) =>
-                      _onReorder(books, oldIndex, newIndex),
-                  itemCount: books.length,
-                  itemBuilder: (context, index) {
-                    final book = books[index];
-                    return Padding(
-                      key: ValueKey(book.id),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 4),
-                      child: Card(
-                        margin: EdgeInsets.zero,
-                        child: ListTile(
-                          leading: const Icon(Icons.drag_indicator_rounded),
-                          title: Text(book.title,
-                              maxLines: 1, overflow: TextOverflow.ellipsis),
-                          subtitle: Text('${book.chapterCount} 集'),
-                        ),
-                      ),
-                    );
-                  },
-                )
-              : _columns == 0
-                  ? ListView.builder(
-                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 20),
-                      itemCount: books.length,
-                      itemBuilder: (context, index) =>
-                          _BookshelfItem(book: books[index], compact: true),
-                    )
-                  : GridView.builder(
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
-                      gridDelegate:
-                          SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: _columns,
-                        // 两列时封面按规范走 3:4 竖版（书是竖的），
-                        // 加上下方两行文字约为宽度的 0.66 倍高。
-                        childAspectRatio:
-                            _columns == 2 ? 0.66 : (_columns == 4 ? 0.5 : 0.53),
-                        crossAxisSpacing: 14,
-                        mainAxisSpacing: 20,
-                      ),
-                      itemCount: books.length,
-                      itemBuilder: (context, index) {
-                        return _BookshelfItem(book: books[index]);
-                      },
-                      // 添加缓存扩展以提高滚动性能
-                      scrollCacheExtent: const ScrollCacheExtent.pixels(1000),
-                    ),
+          : Column(
+              children: [
+                _ContinueListeningCard(books: books),
+                Expanded(child: _buildBookList(books)),
+              ],
+            ),
+    );
+  }
+
+  /// 书籍列表：拖动排序 / 列表视图 / 网格视图三态，与首屏「继续收听」解耦。
+  Widget _buildBookList(List<BookshelfBook> books) {
+    if (_reordering) {
+      return ReorderableListView.builder(
+        // ignore: deprecated_member_use
+        onReorder: (oldIndex, newIndex) => _onReorder(books, oldIndex, newIndex),
+        itemCount: books.length,
+        itemBuilder: (context, index) {
+          final book = books[index];
+          return Padding(
+            key: ValueKey(book.id),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: Card(
+              margin: EdgeInsets.zero,
+              child: ListTile(
+                leading: const Icon(Icons.drag_indicator_rounded),
+                title: Text(book.title,
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                subtitle: Text('${book.chapterCount} 集'),
+              ),
+            ),
+          );
+        },
+      );
+    }
+    if (_columns == 0) {
+      return ListView.builder(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 20),
+        itemCount: books.length,
+        itemBuilder: (context, index) =>
+            _BookshelfItem(book: books[index], compact: true),
+      );
+    }
+    return GridView.builder(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: _columns,
+        // 两列时封面按规范走 3:4 竖版（书是竖的），
+        // 加上下方两行文字约为宽度的 0.66 倍高。
+        childAspectRatio: _columns == 2 ? 0.66 : (_columns == 4 ? 0.5 : 0.53),
+        crossAxisSpacing: 14,
+        mainAxisSpacing: 20,
+      ),
+      itemCount: books.length,
+      itemBuilder: (context, index) => _BookshelfItem(book: books[index]),
+      // 添加缓存扩展以提高滚动性能
+      scrollCacheExtent: const ScrollCacheExtent.pixels(1000),
     );
   }
 
@@ -424,38 +434,7 @@ class _BookshelfItemState extends State<_BookshelfItem> {
   /// 快速播放：直接续播（有进度从进度处播，无进度从头播），
   /// 不跳转播放页 —— 浮球会同步展示播放状态。
   Future<void> _quickPlay(BuildContext context) async {
-    final player = context.read<AudioPlayerService>();
-    if (player.hasBook && player.currentBook!.id == book.id) {
-      // 正在播这本书：直接进播放页
-      if (context.mounted) context.pushPlayerPage();
-      return;
-    }
-    // 章节已拆到独立 box（PERF-01）：getAll() 返回的书不含章节，这里按需取
-    // （命中内存 LRU，代价可忽略）。
-    final chapters = context.read<BookshelfRepository>().getChapters(book.id);
-    if (chapters.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('这本书没有章节信息，请先进入详情页刷新')),
-      );
-      return;
-    }
-    final playBook = Book(
-      id: book.id,
-      title: book.title,
-      author: book.author,
-      description: book.description,
-      coverUrl: book.localCoverPath ?? book.coverUrl,
-      chapters: chapters,
-    );
-    try {
-      await player.resumeFromProgress(playBook);
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('播放失败：$e')),
-        );
-      }
-    }
+    await resumeBook(context, book);
   }
 
   @override
@@ -689,3 +668,170 @@ class _BookshelfItemState extends State<_BookshelfItem> {
 // 旧的自绘占位封面（随机渐变 + 单个汉字 + title.hashCode 取色）已删除。
 // 统一由 widgets/book_cover.dart 的 BookCover 负责（设计规范 §4）：
 // 出版色板 + 竖排书名 + 稳定哈希，且自带角标与进度条。
+
+/// 续播一本书（书架卡片的快捷播放与首屏「继续收听」共用）。
+///
+/// 抽成一份是有意的：这两处需要完全相同的行为 —— 正在播这本书就进播放页，
+/// 否则取章节再 resumeFromProgress。若各写一份，将来「继续收听」的行为会和
+/// 卡片不一致，而且章节拆表后「取章节」这一步漏掉就直接播不了。
+Future<void> resumeBook(BuildContext context, BookshelfBook book) async {
+  final player = context.read<AudioPlayerService>();
+  if (player.hasBook && player.currentBook!.id == book.id) {
+    if (context.mounted) context.pushPlayerPage();
+    return;
+  }
+  // 章节已拆到独立 box（PERF-01）：getAll() 返回的书不含章节，这里按需取
+  // （命中内存 LRU，代价可忽略）。
+  final chapters = context.read<BookshelfRepository>().getChapters(book.id);
+  if (chapters.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('这本书没有章节信息，请先进入详情页刷新')),
+    );
+    return;
+  }
+  final playBook = Book(
+    id: book.id,
+    title: book.title,
+    author: book.author,
+    description: book.description,
+    coverUrl: book.localCoverPath ?? book.coverUrl,
+    chapters: chapters,
+  );
+  try {
+    await player.resumeFromProgress(playBook);
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('播放失败：$e')),
+      );
+    }
+  }
+}
+
+/// 从全部进度中挑出「最近一次收听」的那条。
+///
+/// 抽成顶层函数是为了可测：它决定了用户打开 App 第一眼看到哪本书，
+/// 判错就会把人指向一本早就听完的。
+/// 排序键是 [PlaybackProgress.updatedAt]（播放页每次落盘都会刷新它）。
+PlaybackProgress? latestPlaybackProgress(List<PlaybackProgress> all) {
+  if (all.isEmpty) return null;
+  final sorted = List<PlaybackProgress>.of(all)
+    ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+  return sorted.first;
+}
+
+/// 首屏「继续收听」卡（设计规范 §5.2）。
+///
+/// 听书 App 的核心动作是「接着上次听」，所以它必须是打开 App 第一眼看到的东西，
+/// 而不是让用户先在一排封面里找书。
+class _ContinueListeningCard extends StatelessWidget {
+  const _ContinueListeningCard({required this.books});
+
+  final List<BookshelfBook> books;
+
+  @override
+  Widget build(BuildContext context) {
+    final latest =
+        latestPlaybackProgress(context.watch<ProgressRepository>().getAll());
+    if (latest == null) return const SizedBox.shrink();
+
+    final book = books.where((b) => b.id == latest.bookId).firstOrNull;
+    // 收听记录还在但书已被移出书架：静默不显示，不要崩也不要留一张空卡。
+    if (book == null) return const SizedBox.shrink();
+
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final chapterNo = latest.chapterIndex + 1;
+    // chapterCount 优先取书架记录（会随重新列目录更新），记录里那份只在
+    // 书架记录缺失时兜底。
+    final total = book.chapterCount > 0
+        ? book.chapterCount
+        : (latest.chapterCount ?? 0);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Theme.of(context).cardColor,
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+        ),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 52,
+              height: 70,
+              child: BookCover(
+                title: book.title,
+                author: book.author,
+                customImagePath: book.localCoverPath,
+                networkCoverUrl: book.coverUrl,
+              ),
+            ),
+            const SizedBox(width: AppSpacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '继续收听',
+                    style: AppType.micro.copyWith(color: AppInk.accent),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    book.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppType.title,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    total > 0
+                        ? '第 $chapterNo 章 · 共 $total 章'
+                        : '第 $chapterNo 章',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppType.caption
+                        .copyWith(color: AppInk.secondary(isDark)),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            _PlayButton(onTap: () => resumeBook(context, book)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 墨色实心圆播放按钮（规范 §1.2：主色用墨黑，不用彩色）。
+class _PlayButton extends StatelessWidget {
+  const _PlayButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return InkWell(
+      borderRadius: BorderRadius.circular(22),
+      onTap: onTap,
+      child: Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          color: AppInk.primary(isDark),
+          shape: BoxShape.circle,
+        ),
+        alignment: Alignment.center,
+        child: Icon(
+          Icons.play_arrow_rounded,
+          size: 24,
+          color: AppInk.onSolid(isDark),
+        ),
+      ),
+    );
+  }
+}

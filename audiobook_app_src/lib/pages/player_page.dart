@@ -10,6 +10,7 @@ import '../services/audio_player_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_page_route.dart';
 import '../widgets/frosted_glass.dart';
+import '../theme/app_tokens.dart';
 import '../widgets/throttled_navigator.dart';
 
 class PlayerPage extends StatelessWidget {
@@ -368,36 +369,149 @@ class PlayerPage extends StatelessWidget {
     );
   }
 
+  /// 高频操作区（设计规范 §5.4）。
+  ///
+  /// 此前倍速与定时都藏在弹窗里 —— 而改倍速是听书时最频繁的操作之一，
+  /// 不该每次点两层。现把常用档位直接铺在页面上；非常用档位（0.5x / 3.0x
+  /// 之类）与自定义仍走原弹窗，通过各组末尾的入口进入，不丢功能。
   Widget _buildExtraControls(BuildContext context, AudioPlayerService player) {
-    final scheme = Theme.of(context).colorScheme;
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Speed control
-        GlassSurface(
-          borderRadius: 20,
-          child: TextButton.icon(
-            style: TextButton.styleFrom(foregroundColor: scheme.primary),
-            icon: const Icon(Icons.speed_rounded),
-            label: Text('${player.speed.toStringAsFixed(1)}x'),
-            onPressed: () => _showSpeedDialog(context, player),
+        _buildSectionLabel(context, '播放速度'),
+        const SizedBox(height: AppSpacing.sm),
+        _buildSpeedRow(context, player),
+        const SizedBox(height: AppSpacing.lg),
+        _buildSectionLabel(context, '定时关闭'),
+        const SizedBox(height: AppSpacing.sm),
+        _buildTimerRow(context, player),
+        const SizedBox(height: AppSpacing.lg),
+        _buildChapterRow(context, player),
+      ],
+    );
+  }
+
+  Widget _buildSectionLabel(BuildContext context, String text) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Text(text, style: AppType.micro.copyWith(color: AppInk.tertiary(isDark)));
+  }
+
+  /// 常用倍速直接铺开。命中时芯片反白；当前速度不在常用档里时全部不选中，
+  /// 用户可从「更多」里看到真实取值。
+  Widget _buildSpeedRow(BuildContext context, AudioPlayerService player) {
+    const common = [0.75, 1.0, 1.25, 1.5, 2.0];
+    final current = player.speed;
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        for (final s in common)
+          _chip(
+            context,
+            label: '${s.toStringAsFixed(s % 1 == 0 ? 0 : 2)}x',
+            selected: (current - s).abs() < 0.001,
+            onTap: () => player.setSpeed(s),
           ),
+        _chip(
+          context,
+          label: '更多',
+          onTap: () => _showSpeedDialog(context, player),
         ),
-        // Sleep timer
-        GlassSurface(
-          borderRadius: 20,
-          child: TextButton.icon(
-            style: TextButton.styleFrom(foregroundColor: scheme.primary),
-            icon: Icon(
-              player.hasSleepTimer ? Icons.timer_rounded : Icons.timer_outlined,
-            ),
-            label: Text(player.hasSleepTimer
-                ? _formatDuration(player.sleepRemaining ?? Duration.zero)
-                : '定时'),
-            onPressed: () => _showSleepTimerDialog(context, player),
+      ],
+    );
+  }
+
+  /// 定时：常用三档 + 自定义（走原弹窗）+ 已设置时的取消。
+  Widget _buildTimerRow(BuildContext context, AudioPlayerService player) {
+    const presets = [
+      Duration(minutes: 15),
+      Duration(minutes: 30),
+      Duration(minutes: 60),
+    ];
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        for (final d in presets)
+          _chip(
+            context,
+            label: '${d.inMinutes} 分钟',
+            onTap: () => player.setSleepTimer(d),
+          ),
+        _chip(
+          context,
+          label: '自定义',
+          onTap: () => _showSleepTimerDialog(context, player),
+        ),
+        if (player.hasSleepTimer)
+          _chip(
+            context,
+            label: '剩余 ${_formatDuration(player.sleepRemaining ?? Duration.zero)} · 取消',
+            onTap: () => player.cancelSleepTimer(),
+          ),
+      ],
+    );
+  }
+
+  /// 章节：显示「第 X / 共 Y」，点击打开章节列表。
+  ///
+  /// 章节列表来自 [AudioPlayerService.currentBook]（播放器持有的 Book 模型），
+  /// 播放器本身没有暴露 `chapters` getter —— 别写成 `player.chapters`。
+  Widget _buildChapterRow(BuildContext context, AudioPlayerService player) {
+    final total = player.currentBook?.chapters.length ?? 0;
+    final index = player.currentChapterIndex;
+    return Row(
+      children: [
+        Expanded(
+          child: _chip(
+            context,
+            label: total > 0 ? '章节 ${index + 1} / $total' : '章节',
+            onTap: () => _showChapters(context),
+            fullWidth: true,
           ),
         ),
       ],
+    );
+  }
+
+  /// 规范 §5.4 的芯片：高 28、圆角 10；未选为透明底 + 0.5 分隔线，
+  /// 选中为墨色底 + 纸白字（不用彩色，杂志感要求色彩退后）。
+  Widget _chip(
+    BuildContext context, {
+    required String label,
+    bool selected = false,
+    bool fullWidth = false,
+    VoidCallback? onTap,
+  }) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final child = Container(
+      height: 28,
+      width: fullWidth ? double.infinity : null,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: selected ? AppInk.primary(isDark) : Colors.transparent,
+        border: selected
+            ? null
+            : Border.all(color: AppInk.hairline(isDark), width: 0.5),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: AppType.micro.copyWith(
+          color: selected ? AppInk.onSolid(isDark) : AppInk.secondary(isDark),
+          fontWeight: selected ? FontWeight.w500 : FontWeight.w400,
+        ),
+      ),
+    );
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: onTap,
+      child: child,
     );
   }
 
