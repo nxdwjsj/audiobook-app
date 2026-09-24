@@ -739,6 +739,19 @@ class _ContinueListeningCard extends StatelessWidget {
     // 收听记录还在但书已被移出书架：静默不显示，不要崩也不要留一张空卡。
     if (book == null) return const SizedBox.shrink();
 
+    // 播放器状态：这本书是否正是当前在播的、以及是否在播放中。
+    // 续播之后按钮必须变成暂停，否则用户不知道自己到底按到没有。
+    //
+    // 用 `select` 而不是 `watch`：播放器在整秒变化时就会 notify
+    // （见 audio_player_service 位置流的注释），watch 会让整张卡连封面一起
+    // 每秒重建；select 只在下面这两个布尔值**变化**时才重建。
+    final isCurrent = context.select<AudioPlayerService, bool>(
+      (p) => p.hasBook && p.currentBook?.id == book.id,
+    );
+    final playing = context.select<AudioPlayerService, bool>(
+      (p) => p.isPlaying && p.hasBook && p.currentBook?.id == book.id,
+    );
+
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final chapterNo = latest.chapterIndex + 1;
     // chapterCount 优先取书架记录（会随重新列目录更新），记录里那份只在
@@ -774,7 +787,9 @@ class _ContinueListeningCard extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    '继续收听',
+                    playing
+                        ? '正在播放'
+                        : (isCurrent ? '已暂停' : '继续收听'),
                     style: AppType.micro.copyWith(color: AppInk.accent),
                   ),
                   const SizedBox(height: 2),
@@ -798,7 +813,17 @@ class _ContinueListeningCard extends StatelessWidget {
               ),
             ),
             const SizedBox(width: AppSpacing.sm),
-            _PlayButton(onTap: () => resumeBook(context, book)),
+            _PlayButton(
+              playing: playing,
+              onTap: () {
+                if (isCurrent) {
+                  // 已在播这本书：按钮语义是暂停/继续，不再重新解析直链
+                  context.read<AudioPlayerService>().playPause();
+                } else {
+                  resumeBook(context, book);
+                }
+              },
+            ),
           ],
         ),
       ),
@@ -807,9 +832,13 @@ class _ContinueListeningCard extends StatelessWidget {
 }
 
 /// 墨色实心圆播放按钮（规范 §1.2：主色用墨黑，不用彩色）。
+///
+/// [playing] 为真时图标变暂停 —— 这是「继续收听」卡上唯一的播放态反馈，
+/// 没有它用户点完不知道生效没有。
 class _PlayButton extends StatelessWidget {
-  const _PlayButton({required this.onTap});
+  const _PlayButton({required this.playing, required this.onTap});
 
+  final bool playing;
   final VoidCallback onTap;
 
   @override
@@ -818,7 +847,9 @@ class _PlayButton extends StatelessWidget {
     return InkWell(
       borderRadius: BorderRadius.circular(22),
       onTap: onTap,
-      child: Container(
+      child: AnimatedContainer(
+        duration: AppMotion.player,
+        curve: AppMotion.standard,
         width: 44,
         height: 44,
         decoration: BoxDecoration(
@@ -827,7 +858,7 @@ class _PlayButton extends StatelessWidget {
         ),
         alignment: Alignment.center,
         child: Icon(
-          Icons.play_arrow_rounded,
+          playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
           size: 24,
           color: AppInk.onSolid(isDark),
         ),
