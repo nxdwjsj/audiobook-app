@@ -483,8 +483,9 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
 
   Widget _buildBottomBar(BuildContext context, bool isCurrent,
       AudioPlayerService player, PlaybackProgress? progress) {
-    // 底部播放栏已改为全局悬浮球。正在播放本书时不再占底部空间，
-    // 只保留「继续/开始播放」按钮（已在播时点击无操作，避免打断）。
+    // 常驻播放条只在首页层级显示，详情页是推送路由、不会看到它，
+    // 所以这里保留自己的底部动作条：已在播本书时给「打开播放页」，
+    // 未播时给「继续/开始播放」。
     if (isCurrent) {
       return SafeArea(
         child: Padding(

@@ -24,7 +24,6 @@ import 'services/resource_search_service.dart';
 import 'services/storage_service.dart';
 import 'theme/app_theme.dart';
 import 'theme/app_tokens.dart';
-import 'widgets/floating_player_ball.dart';
 import 'widgets/throttled_navigator.dart' show appNavigatorKey;
 
 /// 统一的错误出口。四个来源都汇到这里：
@@ -282,21 +281,9 @@ class AudiobookApp extends StatelessWidget {
       themeMode: ThemeMode.system,
       navigatorKey: appNavigatorKey,
       home: const HomePage(),
-      // 全局悬浮播放球：盖在所有路由（含底部导航栏）之上，
-      // 播放页打开或无正在播放的书时自动隐藏。
-      // 必须额外包一层 Overlay：播放球挂在 Navigator 之上，
-      // 自身子树里没有 Overlay 祖先，展开横条上的 Tooltip 会因
-      // 找不到 Overlay 直接抛错（红条框盖住整条播放栏）。
-      builder: (context, child) => Stack(
-        children: [
-          child ?? const SizedBox.shrink(),
-          Overlay(
-            initialEntries: [
-              OverlayEntry(builder: (_) => const FloatingPlayerBall()),
-            ],
-          ),
-        ],
-      ),
+      // 播放控制入口已改为 HomePage 底部的常驻迷你播放条
+      // （widgets/mini_player_bar.dart）：只在首页层级显示，进入
+      // 推送路由时随首页一起被覆盖，不再需要全局 Overlay 挂载。
     );
   }
 }

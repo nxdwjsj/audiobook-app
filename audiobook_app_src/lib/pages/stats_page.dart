@@ -41,7 +41,7 @@ class _StatsPageState extends State<StatsPage> {
 
     return Scaffold(
       backgroundColor: Colors.transparent,
-      appBar: AppBar(title: const Text('收听统计')),
+      // 不带 AppBar —— 刊头与栏目行由 HomePage 统一提供。
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         children: [

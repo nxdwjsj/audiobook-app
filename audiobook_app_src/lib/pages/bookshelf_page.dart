@@ -79,11 +79,40 @@ class _BookshelfPageState extends State<BookshelfPage> {
     final books = bookshelfRepo.getAll();
 
     return Scaffold(
-      // 透明背景：露出 HomePage 的渐变，让主界面更通透
+      // 透明背景：露出 HomePage 的渐变，让主界面更通透。
+      // 不带 AppBar —— 刊头与栏目行由 HomePage 统一提供（避免页头叠页头）；
+      // 排序开关等页面级动作收进页内动作行。
       backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        title: Text(_reordering ? '拖动排序' : '我的书架'),
-        actions: [
+      // 「继续收听」放在列表上方且不随列表滚动：
+      // 用户 90% 的使用是「接着上次听」，把它做成常驻动作而不是要找的东西。
+      // 没有收听记录时该卡整块不显示（规范 §5.2：不显示空状态占位）。
+      body: Column(
+        children: [
+          _shelfActionRow(context, books.length),
+          Expanded(
+            child: books.isEmpty
+                ? const _EmptyBookshelf()
+                : Column(
+                    children: [
+                      _ContinueListeningCard(books: books),
+                      Expanded(child: _buildBookList(books)),
+                    ],
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 页内动作行：排序模式的「完成」/ 常规的「更多」菜单，右对齐。
+  /// 原在 AppBar.actions 里，AppBar 移除后收进页内。
+  Widget _shelfActionRow(BuildContext context, int bookCount) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 2, 8, 0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
           if (_reordering)
             Padding(
               padding: const EdgeInsets.only(right: 8),
@@ -94,23 +123,15 @@ class _BookshelfPageState extends State<BookshelfPage> {
             )
           else
             IconButton(
-              icon: const Icon(Icons.more_horiz_rounded),
+              icon: Icon(
+                Icons.more_horiz_rounded,
+                color: AppInk.secondary(isDark),
+              ),
               tooltip: '更多',
-              onPressed: () => _showMoreMenu(context, books.length),
+              onPressed: () => _showMoreMenu(context, bookCount),
             ),
         ],
       ),
-      // 「继续收听」放在列表上方且不随列表滚动：
-      // 用户 90% 的使用是「接着上次听」，把它做成常驻动作而不是要找的东西。
-      // 没有收听记录时该卡整块不显示（规范 §5.2：不显示空状态占位）。
-      body: books.isEmpty
-          ? const _EmptyBookshelf()
-          : Column(
-              children: [
-                _ContinueListeningCard(books: books),
-                Expanded(child: _buildBookList(books)),
-              ],
-            ),
     );
   }
 

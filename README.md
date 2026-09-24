@@ -10,7 +10,7 @@
 一个 Flutter 有声书播放器（主用 Android 真机），核心能力是**直接播放网盘里的音频文件夹**，把网盘文件夹当作一本书来管理（目录、进度、续播、历史）。
 
 - 应用名：`audiobook_app`，显示名「聆云」
-- 版本：`1.2.1+29`（与 `pubspec.yaml` 一致）
+- 版本：`1.3.0+30`（与 `pubspec.yaml` 一致）
 - 平台目录：仅 `android/`（iOS 与 Web 平台目录已在 1.1.0 移除，不再维护）
 - **视觉与交互规范**：改版前必读 [`docs/DESIGN-SYSTEM.md`](docs/DESIGN-SYSTEM.md)（基调：杂志感 · 封面为王）
 - **下载安装**：[Releases · 最新版](https://github.com/nxdwjsj/audiobook-app/releases/latest) → 下载对应的 APK 安装（release 构建、debug 签名、**仅 arm64**）
@@ -223,10 +223,10 @@ box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `li
   正在播放章节高亮、**目录聚合浮动小圆钮**（单击展开竖排**纯图标**菜单：回顶部 / 定位播放 / 正倒序，
   可拖动换位并记忆；独立组件，拖动不重建列表）；
   **定位采用 `GlobalKey + Scrollable.ensureVisible` 按行精确定位**（不估算行高，长书也准）
-- **悬浮播放球**（替代底部迷你播放栏）：全局挂载于 `MaterialApp.builder` 的 Overlay，
-  **可拖到屏幕任意位置**（球心比例持久化，换分辨率/旋转仍可用）；播放中轻微跳动；
-  点击从球的位置展开**小横条**：左半图书信息（点击进播放页）、右半功能键
-  （上一章/播放/下一章/收起），展开不遮罩不挡下层操作；播放页打开时自动隐藏（`PlayerPage.isShown`）
+- **常驻迷你播放条**（替代原悬浮球）：固定在首页底部的 `bottomNavigationBar` 槽位，
+  顶边 2px 章节进度线一眼可见；信息区（封面/书名/章节）点击进播放页，右侧播放/暂停 + 下一章；
+  无在播的书时整条收起；只在首页层级显示（进入播放页/详情页等推送路由时随首页一起被覆盖，
+  不再需要全局 Overlay 挂载与 `PlayerPage.isShown` 判断）
 - **播放**：倍速（至 3.0x）、定时关闭（含自定义分钟）、上一章/下一章、自动连播、
   下一章预加载（播到 80% 预解析）、**播放页目录面板**（打开即定位当前章节、每页 300 集分页）、
   播放页全局唯一、
@@ -309,7 +309,6 @@ box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `li
 | 转存成功却弹「转存结果数量异常（0/1）」 | 夸克任务 done 时 `save_as_top_fids` 有时为空（转存**目录**尤其常见）→ 先复查两轮 task，仍为空就列目标目录按名字 + 类型回查新 fid |
 | 目录定位不准（定位到半截/错行） | 按「行高 64px × index」估算偏移在 dense + 单双行混排时不准 → 改 `GlobalKey` 标记行 + `Scrollable.ensureVisible` 精确定位；长书先切到所在分页再等一帧定位 |
 | 书架封面播放按钮点击穿透进详情页 | 内层 `GestureDetector` 默认 `deferToChild`，tap 被外层 `InkWell` 赢走 → 设 `behavior: HitTestBehavior.opaque` 让内层赢得手势竞技场 |
-| 悬浮面板展开只露出一条/出屏 | 面板沿用球的贴边 `left` 定位，球在右侧时面板向右伸出屏幕 → 面板单独定位：与球同侧对齐、宽度夹在屏内，球太低时翻到球上方 |
 | 浮动按钮拖动卡顿 | 拖动的 `setState` 落在页面级 State 上，每帧重建整页（含 300 行目录）→ 抽成独立 `StatefulWidget`，拖动只重绘自身 |
 | 空列表播放必崩（`ArgumentError`） | `num.clamp(0, length - 1)` 在列表为空时变成 `clamp(0, -1)`，Dart 要求下界 ≤ 上界 → **空集合必须先短路返回**，不要让 clamp 见到空列表 |
 | `list..sort()..take(n)` 裁剪不生效 | 级联操作里 `take()` 的**返回值被丢弃**，list 本身没变 → 必须显式 `return list.take(n).toList()` |

@@ -6,11 +6,8 @@ import '../models/playback_progress.dart';
 import '../repositories/bookshelf_repository.dart';
 import '../repositories/progress_repository.dart';
 import '../theme/app_tokens.dart';
-import '../widgets/app_page_route.dart';
 import '../widgets/book_cover.dart';
-import '../widgets/throttled_navigator.dart';
 import 'bookshelf_page.dart' show resumeBook, latestPlaybackProgress;
-import 'resource_search_page.dart';
 
 /// 「在听」首页（设计规范 §5.2，有声杂志方向）。
 ///
@@ -37,18 +34,9 @@ class ListeningPage extends StatelessWidget {
     final books = repo.getAll();
 
     return Scaffold(
-      // 透明：露出 HomePage 的底色，三个 tab 共享同一层背景
+      // 透明：露出 HomePage 的底色，四个栏目共享同一层背景。
+      // 不带 AppBar —— 刊头与栏目行由 HomePage 统一提供（避免页头叠页头）。
       backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        title: const Text('在听'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.search_rounded),
-            tooltip: '搜索',
-            onPressed: () => _openSearch(context),
-          ),
-        ],
-      ),
       body: books.isEmpty
           ? Center(
               child: Text(
@@ -114,12 +102,6 @@ class ListeningPage extends StatelessWidget {
     );
   }
 
-  void _openSearch(BuildContext context) {
-    // 与书架页一致：Navigator 1.0 + 节流封装 + 统一页面转场
-    context.pushThrottled(
-      AppPageRoute(builder: (_) => const ResourceSearchPage()),
-    );
-  }
 }
 
 /// 本期主打：大封面 + 期号 + 书名 + 演播 + 继续收听。

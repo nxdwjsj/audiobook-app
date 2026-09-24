@@ -1,7 +1,7 @@
 # 聆云（audiobook_app）项目技术文档
 
 > 项目路径：`D:\Project\TraeWorkspace\audiobook\audiobook_app_src`
-> 当前版本：`1.2.1+29`（发布 APK 仅 arm64）
+> 当前版本：`1.3.0+30`（发布 APK 仅 arm64）
 
 ---
 
@@ -64,7 +64,8 @@ audiobook_app_src/
 │  │  ├─ quark_web_login_page.dart #   夸克内置 WebView 登录（桌面 UA）
 │  │  ├─ edit_book_info_page.dart  #   编辑书籍信息（封面/作者/简介）
 │  ├─ widgets/                     # 公共组件
-│  │  ├─ floating_player_ball.dart #   全局悬浮播放球（Overlay 挂载，见 §4）
+│  │  ├─ book_cover.dart           #   统一封面组件（三级降级，全应用唯一渲染入口）
+│  │  ├─ mini_player_bar.dart      #   常驻迷你播放条（HomePage 底部，见 §5.7 规范）
 │  │  ├─ frosted_glass.dart        #   毛玻璃容器 / 底衬（FrostedGlass、showFrostedBottomSheet）
 │  │  ├─ app_page_route.dart       #   统一页面转场动画
 │  │  ├─ throttled_navigator.dart  #   跳转节流 600ms + 播放页单例守卫
@@ -94,7 +95,7 @@ audiobook_app_src/
 | Dialog | 圆角 24、浅色白 / 深色 `surfaceContainerLow` |
 | AppBar | 透明背景（露出页面渐变）、标题 19/w600 |
 | **低饱和灰蓝** | **没有**。当前为饱和紫罗兰色系；全项目无灰蓝色常量 |
-| **颜色常量定义位置** | 仅 `app_theme.dart` 顶部的 `seed_color` 与 `pageTopColor` / `pageBottomColor`；页面内个别硬编码色（如悬浮球横条圆角背景 `Colors.black.withValues(alpha: …)`）在各自文件内 |
+| **颜色常量定义位置** | 仅 `app_theme.dart` 顶部的 `seed_color` 与 `pageTopColor` / `pageBottomColor`；页面内个别硬编码色在各自文件内 |
 
 > 改主题只需改 `seed_color` 一个值即可全局换色（M3 自动派生），页面背景色需要同步改 `pageTopColor` / `pageBottomColor`。
 
@@ -107,9 +108,8 @@ audiobook_app_src/
 | 类型 | 组件 | 文件路径 | 说明 |
 |---|---|---|---|
 | 书架 item | `_BookshelfItem`（StatefulWidget，独立 Widget） | `lib/pages/bookshelf_page.dart:294` | 网格/列表双形态，含快速播放按钮、长按菜单 |
-| 占位封面 | `_PlaceholderCover` | `bookshelf_page.dart:694`、`shelf_book_detail_page.dart`（同名私有类两处实现） | 按书名哈希生成渐变占位图 |
-| 缩略图 | 无独立组件；各页面私有 `_cover()` / `_buildCover()` / `_coverWidget()` 方法 | `bookshelf_page.dart` / `shelf_book_detail_page.dart` / `player_page.dart` | 均已带解码尺寸限制（`cacheWidth`/`memCacheWidth` 300~600） |
-| 悬浮播放球 | `FloatingPlayerBall` | `lib/widgets/floating_player_ball.dart` | 全局 Overlay 挂载（`MaterialApp.builder`），可拖动、展开小横条 |
+| 统一封面 | `BookCover` | `lib/widgets/book_cover.dart` | 三级降级（自选图 → 网络图 → 出版色板生成封面），全应用唯一封面渲染入口 |
+| 迷你播放条 | `MiniPlayerBar` | `lib/widgets/mini_player_bar.dart` | HomePage `bottomNavigationBar` 槽位；顶边 2px 章节进度线；无在播书时收起；仅首页层级显示（推送路由自动覆盖） |
 | 导航节流 | `pushThrottled` / `pushPlayerPage` | `lib/widgets/throttled_navigator.dart` | 600ms 节流 + 播放页单例 |
 | 弹窗组件 | **无公共封装**，全部就地 `showDialog` / `showModalBottomSheet` | 见 §5 | 改造弹窗时需逐处处理 |
 | BottomSheet | 同上，就地实现 | 见 §5 | — |
@@ -145,7 +145,7 @@ audiobook_app_src/
 |---|---|
 | 列表实现 | `ReorderableListView.builder`（排序模式，:115）/ `ListView.builder`（列表视图，:139）/ `GridView.builder` + `SliverGridDelegateWithFixedCrossAxisCount`（网格 2/3/4 列，:145）；**非** CustomScrollView |
 | item 独立 Widget | **是**：`_BookshelfItem`（StatefulWidget，:294），拖动/点击只重建自身 |
-| 缩略图圆角 | 网格视图：卡片整体圆角 18（Card 主题）；列表视图：封面 `ClipRRect` 圆角 **8**（:612）；详情页封面圆角 12；悬浮球封面圆角 8 |
+| 缩略图圆角 | 统一由 `BookCover` 渲染，默认圆角 10；迷你播放条封面 42×56（3:4） |
 | 分页/懒加载 | `GridView.builder`/`ListView.builder` 天然懒构建（视口外不构建）；数据量（书架几十本）无需分页 |
 
 ### 其余列表（均懒加载 builder）
@@ -225,7 +225,7 @@ audiobook_app_src/
 name: audiobook_app
 description: 聆云 - 网盘有声书播放器（直接播放网盘音频文件夹，管理目录、进度与收听历史）
 publish_to: 'none'
-version: 1.2.1+29
+version: 1.3.0+30
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -285,5 +285,5 @@ flutter:
 | APK 架构 | release 仅 arm64-v8a（20.5MB）；构建命令 `flutter build apk --release --target-platform android-arm64`（勿在 gradle 加 splits，与 Flutter 插件冲突） |
 | 图标 tree-shaking | 已启用（MaterialIcons 1.6MB → 11.6KB） |
 | iOS / Web | 工程存在但**未验证** |
-| 低端设备降级策略 | **无显式策略**。已有的隐性优化：封面解码尺寸限制（cacheWidth 300~600）、长目录分页 300 章 + 懒加载、跳转节流 600ms、拖动类组件独立 StatefulWidget 化（拖动不重建整页）、悬浮球动画按需启停、进度通知整秒节流 |
+| 低端设备降级策略 | **无显式策略**。已有的隐性优化：封面解码尺寸限制（cacheWidth 300~600）、长目录分页 300 章 + 懒加载、跳转节流 600ms、拖动类组件独立 StatefulWidget 化（拖动不重建整页）、进度通知整秒节流 |
 | 已知性能坑 | `positionStream` 高频通知已节流到秒；MIUI 真机 `flutter run` 易断连，验证用 `adb install -r` + `logcat` |

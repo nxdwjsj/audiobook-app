@@ -23,50 +23,64 @@ class HistoryPage extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        title: const Text('收听历史'),
-        actions: [
-          if (sessions.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.delete_sweep_outlined),
-              tooltip: '清空历史',
-              onPressed: () => _confirmClear(context, sessions.length),
+      // 不带 AppBar —— 刊头与栏目行由 HomePage 统一提供；
+      // 「清空历史」收进页内动作行。
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 2, 8, 0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                if (sessions.isNotEmpty)
+                  IconButton(
+                    icon: const Icon(Icons.delete_sweep_outlined),
+                    tooltip: '清空历史',
+                    onPressed: () => _confirmClear(context, sessions.length),
+                  ),
+              ],
             ),
+          ),
+          Expanded(
+            child: sessions.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.history_rounded,
+                          size: 72,
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurfaceVariant
+                              .withValues(alpha: 0.4),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          '还没有收听记录',
+                          style:
+                              Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
+                        ),
+                      ],
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: sessions.length,
+                    itemBuilder: (context, index) {
+                      final s = sessions[index];
+                      return _SessionTile(
+                        session: s,
+                        shelfBook: shelfRepo.getById(s.bookId),
+                      );
+                    },
+                  ),
+          ),
         ],
       ),
-      body: sessions.isEmpty
-          ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.history_rounded,
-                    size: 72,
-                    color: Theme.of(context)
-                        .colorScheme
-                        .onSurfaceVariant
-                        .withValues(alpha: 0.4),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    '还没有收听记录',
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                  ),
-                ],
-              ),
-            )
-          : ListView.builder(
-              itemCount: sessions.length,
-              itemBuilder: (context, index) {
-                final s = sessions[index];
-                return _SessionTile(
-                  session: s,
-                  shelfBook: shelfRepo.getById(s.bookId),
-                );
-              },
-            ),
     );
   }
 
