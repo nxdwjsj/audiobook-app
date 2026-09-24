@@ -639,7 +639,7 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
                 child: Text(
                   crumb.name,
                   style: TextStyle(
-                    fontWeight: isLast ? FontWeight.w600 : FontWeight.normal,
+                    fontWeight: isLast ? FontWeight.w500 : FontWeight.normal,
                   ),
                 ),
               ),

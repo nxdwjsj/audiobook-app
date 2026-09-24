@@ -5,6 +5,7 @@ import '../models/listen_session.dart';
 import '../repositories/bookshelf_repository.dart';
 import '../repositories/listen_session_repository.dart';
 import '../services/audio_player_service.dart';
+import '../theme/app_tokens.dart';
 import '../widgets/frosted_glass.dart';
 import '../widgets/throttled_navigator.dart';
 import '../models/book.dart';
@@ -130,6 +131,7 @@ class _SessionTile extends StatelessWidget {
     final percent = total > 0 ? (chapterNo / total * 100).round() : null;
     final chapterTitle = session.chapterTitle;
     final isCurrent = _isCurrentlyPlaying(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Dismissible(
       key: ValueKey(session.id),
@@ -172,35 +174,40 @@ class _SessionTile extends StatelessWidget {
           title,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 15),
+          // 原为 fontSize 15 + w500：15 不在字阶里。标题级是 17，正文是 14 ——
+          // 列表项属正文级，取 body。
+          style: AppType.body.copyWith(
+            fontWeight: FontWeight.w500,
+            color: AppInk.primary(isDark),
+          ),
         ),
         subtitle: Padding(
-          padding: const EdgeInsets.only(top: 4),
+          padding: const EdgeInsets.only(top: AppSpacing.xs),
           child: Text(
             '第 $chapterNo 章${chapterTitle != null ? ' · $chapterTitle' : ''}\n'
             '${_fmtStart(session.startedAt)} · ${_fmtDuration(session.positionSeconds)}'
             '${percent != null ? '（$percent%）' : ''}',
             maxLines: 3,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 13),
+            // 原为 fontSize 13（不在字阶里）→ caption 12 + 次文字色，
+            // 与标题形成明确层级而不是靠 1px 的差别。
+            style: AppType.caption.copyWith(color: AppInk.secondary(isDark)),
           ),
         ),
         trailing: isCurrent
             ? Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
                 decoration: BoxDecoration(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .primaryContainer
-                      .withValues(alpha: 0.6),
-                  borderRadius: BorderRadius.circular(12),
+                  color: AppInk.accent(isDark).withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
                 ),
                 child: Text(
                   '正在播放',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Theme.of(context).colorScheme.primary,
+                  // 原为 fontSize 12 + w600：w600 违反「只用 400/500」的硬约束。
+                  style: AppType.micro.copyWith(
+                    fontWeight: FontWeight.w500,
+                    color: AppInk.accent(isDark),
                   ),
                 ),
               )

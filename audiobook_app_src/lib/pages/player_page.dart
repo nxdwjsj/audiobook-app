@@ -106,7 +106,7 @@ class PlayerPage extends StatelessWidget {
                     Text(
                       book.title,
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.bold,
+                            fontWeight: FontWeight.w500,
                           ),
                       textAlign: TextAlign.center,
                       maxLines: 2,
@@ -872,7 +872,7 @@ class _ChapterSheetState extends State<_ChapterSheet> {
                     style: Theme.of(context)
                         .textTheme
                         .titleMedium
-                        ?.copyWith(fontWeight: FontWeight.bold),
+                        ?.copyWith(fontWeight: FontWeight.w500),
                   ),
                 ),
                 IconButton(
@@ -940,7 +940,7 @@ class _ChapterSheetState extends State<_ChapterSheet> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontWeight: isCurrent ? FontWeight.bold : null,
+                      fontWeight: isCurrent ? FontWeight.w500 : null,
                       color: isCurrent ? scheme.primary : null,
                     ),
                   ),

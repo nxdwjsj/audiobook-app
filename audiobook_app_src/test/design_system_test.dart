@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:math' show pow;
 
 import 'package:flutter/material.dart';
@@ -260,6 +261,35 @@ void main() {
       expect(AppType.title.fontSize! > AppType.body.fontSize!, isTrue);
       expect(AppType.body.fontSize! > AppType.caption.fontSize!, isTrue);
       expect(AppType.caption.fontSize! >= AppType.micro.fontSize!, isTrue);
+    });
+
+    test('全库源码不得出现 bold / w600 及以上（规范 §2 的机器化执行）', () {
+      // 只做一次代码清扫是不够的：下一个人写 `FontWeight.bold` 时没人拦得住。
+      // 这条测试直接读 lib/ 源码，让规范变成可校验的约束。
+      const forbidden = [
+        'FontWeight.bold',
+        'FontWeight.w600',
+        'FontWeight.w700',
+        'FontWeight.w800',
+        'FontWeight.w900',
+      ];
+      final offenders = <String>[];
+      final root = Directory('lib');
+      expect(root.existsSync(), isTrue,
+          reason: '测试需在工程根目录运行（找不到 lib/）');
+      for (final entity in root.listSync(recursive: true)) {
+        if (entity is! File || !entity.path.endsWith('.dart')) continue;
+        final text = entity.readAsStringSync();
+        for (final bad in forbidden) {
+          if (text.contains(bad)) offenders.add('${entity.path} 使用了 $bad');
+        }
+      }
+      expect(
+        offenders,
+        isEmpty,
+        reason: '规范只允许 400 / 500 两种字重，以下位置违反：\n'
+            '${offenders.join('\n')}',
+      );
     });
   });
 }

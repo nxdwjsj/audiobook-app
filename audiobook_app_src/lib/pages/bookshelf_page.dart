@@ -302,7 +302,7 @@ class _EmptyBookshelf extends StatelessWidget {
             Text(
               '书架空空如也',
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w500,
                   ),
             ),
             const SizedBox(height: 10),
@@ -604,7 +604,7 @@ class _BookshelfItemState extends State<_BookshelfItem> {
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                                fontWeight: FontWeight.w600, fontSize: 14.5),
+                                fontWeight: FontWeight.w500, fontSize: 14.5),
                           ),
                         ),
                         // 快速播放按钮：标题右侧
@@ -621,7 +621,7 @@ class _BookshelfItemState extends State<_BookshelfItem> {
                           style: TextStyle(
                             fontSize: 11,
                             color: badge.color,
-                            fontWeight: FontWeight.w600,
+                            fontWeight: FontWeight.w500,
                           ),
                         ),
                         const SizedBox(width: 10),

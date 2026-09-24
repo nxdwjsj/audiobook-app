@@ -139,7 +139,7 @@ class _SourceTile extends StatelessWidget {
         source.name,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontWeight: FontWeight.w600),
+        style: const TextStyle(fontWeight: FontWeight.w500),
       ),
       subtitle: Text(
         '${source.host}${isBuiltin ? ' · 内置' : ''}',

@@ -269,7 +269,7 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontWeight:
-                      isPlayingChapter ? FontWeight.bold : FontWeight.normal,
+                      isPlayingChapter ? FontWeight.w500 : FontWeight.normal,
                   color: isPlayingChapter ? primary : null,
                 ),
               ),
@@ -308,7 +308,7 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
       child: Text(
         chapterCount == 0 ? '暂无章节信息' : '目录（$chapterCount 集）',
         style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.bold,
+              fontWeight: FontWeight.w500,
             ),
       ),
     );
@@ -350,7 +350,7 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
 
   /// 详情页头部（设计规范 §5：封面为主角，文字层级靠字号与颜色对比建立）。
   ///
-  /// 此前标题用 `FontWeight.bold`，与规范「只用 400/500 两种字重」冲突；
+  /// 此前标题用 `FontWeight.w500`，与规范「只用 400/500 两种字重」冲突；
   /// 字号与颜色也都是硬编码的 theme 复制，换主题时会脱节。现统一走令牌。
   Widget _buildHeader(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;

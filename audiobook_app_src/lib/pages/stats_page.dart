@@ -192,8 +192,10 @@ class _StatsPageState extends State<StatsPage> {
       child: Text(
         '$day',
         style: TextStyle(
+          // 字号由热力图格子尺寸推导（非字阶），但**字重必须守规范**：
+          // 只允许 400 / 500，原先「今天」用 bold、其余 normal 是两套体系。
           fontSize: size * 0.32,
-          fontWeight: isToday ? FontWeight.bold : FontWeight.normal,
+          fontWeight: isToday ? FontWeight.w500 : FontWeight.w400,
           color: level >= 3 ? scheme.onPrimary : scheme.onSurfaceVariant,
         ),
       ),
@@ -281,7 +283,8 @@ class _StatsPageState extends State<StatsPage> {
                 Text(
                   _formatDuration(total),
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.bold,
+                        // 规范 §2：只用 400 / 500 两种字重
+                        fontWeight: FontWeight.w500,
                       ),
                 ),
                 if (listenedDays > 0) ...[

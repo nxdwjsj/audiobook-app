@@ -496,7 +496,7 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
                       fontSize: 13,
                       color: fg,
                       fontWeight:
-                          selected ? FontWeight.w600 : FontWeight.normal,
+                          selected ? FontWeight.w500 : FontWeight.normal,
                     ),
                   ),
                 ),
@@ -626,7 +626,7 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
               style: Theme.of(context)
                   .textTheme
                   .titleSmall
-                  ?.copyWith(fontWeight: FontWeight.bold),
+                  ?.copyWith(fontWeight: FontWeight.w500),
             ),
             const SizedBox(width: 6),
             if (loading)
@@ -728,7 +728,7 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
               label,
               style: TextStyle(
                 fontSize: 13,
-                fontWeight: FontWeight.w600,
+                fontWeight: FontWeight.w500,
                 color: scheme.onSurfaceVariant,
               ),
             ),
@@ -901,7 +901,7 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
           h.title,
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontWeight: FontWeight.w600),
+          style: const TextStyle(fontWeight: FontWeight.w500),
         ),
         subtitle: Text(
           '$sourceName · 在线收听${h.author != null && h.author!.isNotEmpty ? ' · ${h.author}' : ''}',
@@ -953,7 +953,7 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
           r.title,
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontWeight: FontWeight.w600),
+          style: const TextStyle(fontWeight: FontWeight.w500),
         ),
         subtitle: r.error != null
             ? Text(r.error!,

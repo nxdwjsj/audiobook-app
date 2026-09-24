@@ -376,7 +376,7 @@ class _FloatingPlayerBallState extends State<FloatingPlayerBall>
                                     style: Theme.of(context)
                                         .textTheme
                                         .titleSmall
-                                        ?.copyWith(fontWeight: FontWeight.w600),
+                                        ?.copyWith(fontWeight: FontWeight.w500),
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
