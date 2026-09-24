@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>聆云 · 有声杂志 原型</title>
+<style>
+:root{
+  --paper:#FAFAF8; --surface:#FFFFFF;
+  --ink:#1A1A1A; --ink2:#5C5C5C; --ink3:#6F6F6F;
+  --hair:rgba(0,0,0,.09);
+  --accent:#1F6F4A;
+  --r-card:16px; --r-cover:10px; --r-chip:10px; --r-btn:14px;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%}
+body{
+  background:#E9E9E4; color:var(--ink);
+  font:400 14px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK SC",sans-serif;
+  display:flex; justify-content:center;
+}
+#app{
+  width:100%; max-width:430px; height:100dvh; background:var(--paper);
+  display:flex; flex-direction:column; position:relative; overflow:hidden;
+}
+/* 顶部栏目 */
+nav{
+  display:flex; align-items:center; gap:22px; padding:14px 18px 6px 18px;
+  flex:0 0 auto;
+}
+nav .tab{
+  font-size:14px; color:var(--ink3); padding-bottom:8px; position:relative;
+  background:none; border:0; font-family:inherit; cursor:pointer;
+}
+nav .tab.on{ color:var(--ink); font-weight:500 }
+nav .tab.on::after{
+  content:""; position:absolute; left:0; right:0; bottom:2px; height:1.5px; background:var(--ink);
+}
+nav .ic{ margin-left:auto; display:flex; gap:16px; color:var(--ink3) }
+.ic svg{ width:18px; height:18px; display:block }
+
+/* 内容区 */
+main{ flex:1 1 auto; overflow-y:auto; overscroll-behavior:contain; padding-bottom:8px }
+.screen{ display:none } .screen.on{ display:block }
+
+/* 本期主打 */
+.hero{ padding:10px 18px 20px 18px }
+.hero-row{ display:flex; gap:16px }
+.cover{
+  border-radius:var(--r-cover); position:relative; flex:0 0 auto;
+  box-shadow:0 1px 3px rgba(0,0,0,.13), 0 0 0 .5px rgba(0,0,0,.10);
+  display:flex; align-items:center; justify-content:center; overflow:hidden;
+}
+.cover .vt{
+  writing-mode:vertical-rl; text-orientation:upright;
+  color:#F2EDE4; font-weight:500; letter-spacing:.06em; line-height:1;
+}
+.cover .inner{
+  position:absolute; inset:8px; border:.5px solid rgba(242,237,228,.26); border-radius:4px;
+  display:flex; align-items:center; justify-content:center;
+}
+.hero .cover{ width:132px; height:176px }
+.hero .cover .vt{ font-size:19px }
+.hero .cover .au{ position:absolute; bottom:12px; left:0; right:0; text-align:center;
+  color:rgba(242,237,228,.95); font-size:10px; font-weight:400 }
+.no{ font-size:11px; color:var(--ink3); letter-spacing:.16em; margin:2px 0 0 0 }
+h1{ font-size:22px; font-weight:500; margin:9px 0 0 0; line-height:1.3; letter-spacing:.2px }
+.au-line{ font-size:14px; color:var(--ink2); margin:7px 0 0 0 }
+.meta{ font-size:12px; color:var(--ink3); margin:4px 0 0 0 }
+.resume{ display:flex; align-items:center; gap:10px; margin-top:16px }
+.playbtn{
+  width:44px; height:44px; border-radius:50%; background:var(--ink); border:0;
+  display:flex; align-items:center; justify-content:center; flex:0 0 auto; cursor:pointer;
+}
+.playbtn span{ width:0;height:0;border-left:11px solid var(--paper);
+  border-top:7px solid transparent;border-bottom:7px solid transparent;margin-left:3px }
+.playbtn.playing span{ width:4px;height:15px;border:0;background:var(--paper);
+  border-radius:1px;margin:0; box-shadow:7px 0 0 var(--paper) }
+.playbtn.playing{ padding-right:7px }
+.resume .t{ font-size:14px; line-height:1.35 }
+.resume .t small{ display:block; color:var(--ink3); font-size:11px; margin-top:2px }
+
+/* 栏目 */
+.rail{ padding:16px 0 4px 0; border-top:.5px solid var(--hair); margin-top:4px }
+.rail-hd{ display:flex; align-items:baseline; padding:0 18px }
+.rail-hd b{ font-size:14px; font-weight:500 }
+.rail-hd i{ margin-left:auto; font-size:11px; color:var(--ink3); font-style:normal }
+.rail-row{ display:flex; gap:12px; overflow-x:auto; padding:11px 18px 14px 18px;
+  scrollbar-width:none }
+.rail-row::-webkit-scrollbar{ display:none }
+.item{ width:82px; flex:0 0 auto; cursor:pointer }
+.item .cover{ width:82px; height:109px }
+.item .cover .vt{ font-size:13px }
+.item .nm{ font-size:12px; margin:7px 0 0 0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+.item .sb{ font-size:11px; color:var(--ink3); margin:2px 0 0 0; white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis }
+.bar{ position:relative; height:2.5px; background:var(--hair); border-radius:2px; margin-top:6px }
+.bar i{ position:absolute; left:0; top:0; bottom:0; background:var(--accent); border-radius:2px }
+
+/* 书架网格 */
+.grid{ display:grid; grid-template-columns:1fr 1fr; gap:18px 14px; padding:14px 18px 20px 18px }
+.grid .cover{ width:100%; height:0; padding-bottom:133%; position:relative }
+.grid .cover .inner{ inset:8px }
+.grid .cover .vt{ font-size:16px; position:absolute; left:50%; top:50%;
+  transform:translate(-50%,-50%) }
+.grid .nm{ font-size:14px; font-weight:500; margin:9px 0 0 0; white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis }
+.grid .mt{ font-size:11px; color:var(--ink3); margin:3px 0 0 0 }
+.hint{ font-size:11px; color:var(--ink3); padding:2px 18px 10px 18px }
+
+/* 迷你播放条 */
+.mini{
+  flex:0 0 auto; display:flex; align-items:center; gap:10px; padding:9px 18px 13px 18px;
+  background:var(--paper); border-top:.5px solid var(--hair);
+}
+.mini .cv{ width:32px;height:32px;border-radius:6px;flex:0 0 auto }
+.mini .t{ min-width:0; flex:1 }
+.mini .t p{ margin:0; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+.mini .t small{ display:block; font-size:11px; color:var(--ink3); margin-top:1px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+.mini button{ background:none;border:0;padding:8px;cursor:pointer;color:var(--ink);display:block }
+.mini svg{ width:18px;height:18px;display:block }
+
+/* 全屏层（播放页 / 详情页） */
+.sheet{
+  position:absolute; inset:0; background:var(--paper); z-index:20;
+  display:flex; flex-direction:column; transform:translateY(100%);
+  transition:transform .28s cubic-bezier(.2,.8,.2,1);
+}
+.sheet.on{ transform:translateY(0) }
+.sh-hd{ display:flex; align-items:center; padding:14px 18px; flex:0 0 auto }
+.sh-hd .bk{ background:none;border:0;font:inherit;color:var(--ink2);cursor:pointer;padding:6px 0 }
+.sh-hd .ttl{ margin:0 auto; font-size:12px; color:var(--ink3) }
+.sh-body{ flex:1; overflow-y:auto; padding:0 18px 24px 18px }
+
+/* 播放页 */
+.pcov{ width:196px; height:261px; margin:6px auto 0 auto }
+.pcov .vt{ font-size:26px }
+.ptitle{ text-align:center; font-size:17px; font-weight:500; margin:18px 0 0 0 }
+.psub{ text-align:center; font-size:12px; color:var(--ink2); margin:5px 0 0 0 }
+.times{ display:flex; justify-content:space-between; font-size:11px; color:var(--ink3);
+  margin-top:16px }
+.times .rem{ color:var(--accent) }
+.pbar{ position:relative; height:3px; background:var(--hair); border-radius:2px; margin-top:7px }
+.pbar i{ position:absolute; left:0; top:0; bottom:0; background:var(--ink); border-radius:2px }
+.pbar b{ position:absolute; top:50%; width:11px;height:11px;border-radius:50%;
+  background:var(--ink); transform:translate(-50%,-50%) }
+.ctrls{ display:flex; align-items:center; justify-content:center; gap:26px; margin-top:20px }
+.ru{ width:40px;height:40px;border-radius:50%;border:.5px solid var(--hair2,#DDD);
+  display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--ink2);
+  background:none;cursor:pointer;font-family:inherit }
+.big{ width:56px;height:56px;border-radius:50%;background:var(--ink);border:0;
+  display:flex;align-items:center;justify-content:center;cursor:pointer }
+.chips{ display:flex; gap:8px; margin-top:22px }
+.chip{
+  flex:1; text-align:center; padding:9px 0; border-radius:var(--r-chip);
+  border:.5px solid var(--hair); font-size:11px; color:var(--ink2);
+  background:none; font-family:inherit; cursor:pointer; min-height:34px;
+}
+.chip.act{ background:var(--ink); border-color:var(--ink); color:var(--paper); font-weight:500 }
+
+/* 底部选择面板 */
+.pop{
+  position:absolute; left:0; right:0; bottom:0; background:var(--surface); z-index:30;
+  border-radius:20px 20px 0 0; padding:18px 18px 26px 18px;
+  transform:translateY(100%); transition:transform .25s ease;
+  box-shadow:0 -1px 0 var(--hair);
+}
+.pop.on{ transform:translateY(0) }
+.pop h3{ margin:0 0 14px 0; font-size:14px; font-weight:500 }
+.pop .row{ display:flex; flex-wrap:wrap; gap:8px }
+.pop .opt{ padding:9px 15px; border-radius:var(--r-chip); border:.5px solid var(--hair);
+  background:none; font:inherit; font-size:12px; color:var(--ink2); cursor:pointer }
+.pop .opt.act{ background:var(--ink); border-color:var(--ink); color:var(--paper); font-weight:500 }
+.mask{ position:absolute; inset:0; background:rgba(0,0,0,.18); z-index:25; display:none }
+.mask.on{ display:block }
+
+/* 详情页章节 */
+.dh{ display:flex; gap:14px; padding:4px 0 18px 0 }
+.dh .cover{ width:96px; height:128px }
+.dh .cover .vt{ font-size:15px }
+.dh h2{ font-size:17px; font-weight:500; margin:2px 0 0 0; line-height:1.35 }
+.dh .au{ font-size:14px; color:var(--ink2); margin:6px 0 0 0 }
+.dh .mt{ font-size:12px; color:var(--ink3); margin:4px 0 0 0 }
+.dplay{ margin-top:14px; width:100%; padding:12px 0; border-radius:var(--r-btn);
+  background:var(--ink); color:var(--paper); border:0; font:inherit; font-weight:500; cursor:pointer }
+.chs{ border-top:.5px solid var(--hair) }
+.chs button{
+  width:100%; display:flex; align-items:center; gap:10px; padding:14px 0;
+  background:none; border:0; border-bottom:.5px solid var(--hair);
+  font:inherit; color:var(--ink); text-align:left; cursor:pointer; min-height:48px;
+}
+.chs button .n{ color:var(--ink3); font-size:12px; width:34px; flex:0 0 auto }
+.chs button .t{ flex:1; min-width:0; font-size:14px; white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis }
+.chs button.cur .n, .chs button.cur .t{ color:var(--accent) }
+.chs button .tag{ font-size:11px; color:var(--accent); flex:0 0 auto }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <nav>
+    <button class="tab on" data-tab="live">在听</button>
+    <button class="tab" data-tab="shelf">书架</button>
+    <button class="tab" data-tab="history">历史</button>
+    <button class="tab" data-tab="stats">统计</button>
+    <span class="ic">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </span>
+  </nav>
+
+  <main>
+    <!-- 在听（有声杂志首屏） -->
+    <section class="screen on" id="s-live">
+      <div class="hero">
+        <div class="hero-row">
+          <div class="cover" id="hero-cover"><div class="inner"><span class="vt" id="hero-vt"></span></div><span class="au" id="hero-au"></span></div>
+          <div style="min-width:0;flex:1;padding-top:2px">
+            <p class="no">NO.07</p>
+            <h1 id="hero-title">蛊真人</h1>
+            <p class="au-line" id="hero-author">老宝玉 演播</p>
+            <p class="meta" id="hero-meta">第 37 章 · 共 1204 章</p>
+            <div class="resume">
+              <button class="playbtn" id="hero-play"><span></span></button>
+              <span class="t">继续收听<small id="hero-rem">本章还剩 17:26</small></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="rail">
+        <div class="rail-hd"><b>继续收听</b><i>全部 →</i></div>
+        <div class="rail-row" id="rail-1"></div>
+      </div>
+      <div class="rail">
+        <div class="rail-hd"><b>新入库</b><i>全部 →</i></div>
+        <div class="rail-row" id="rail-2"></div>
+      </div>
+    </section>
+
+    <!-- 书架 -->
+    <section class="screen" id="s-shelf">
+      <p class="hint">点封面直接开播 · 长按进详情</p>
+      <div class="grid" id="shelf-grid"></div>
+    </section>
+
+    <!-- 历史 -->
+    <section class="screen" id="s-history">
+      <div style="padding:6px 18px 0 18px" id="hist-list"></div>
+    </section>
+
+    <!-- 统计 -->
+    <section class="screen" id="s-stats">
+      <div style="padding:6px 18px 0 18px" id="stats-body"></div>
+    </section>
+  </main>
+
+  <!-- 迷你播放条 -->
+  <div class="mini">
+    <div class="cv" id="mini-cv"></div>
+    <div class="t">
+      <p id="mini-title">以「有声杂志」方式重排</p>
+      <small id="mini-sub">点右上进入播放页 · 原型演示</small>
+    </div>
+    <button id="mini-play" aria-label="播放/暂停">
+      <svg viewBox="0 0 24 24" fill="currentColor" id="mini-icon"><path d="M8 5v14l11-7z"/></svg>
+    </button>
+  </div>
+
+  <!-- 播放页 -->
+  <div class="sheet" id="player">
+    <div class="sh-hd">
+      <button class="bk" data-close="player">‹ 返回</button>
+      <span class="ttl">正在播放</span>
+      <button class="bk" data-close="player">···</button>
+    </div>
+    <div class="sh-body">
+      <div class="cover pcov" id="p-cover"><div class="inner"><span class="vt" id="p-vt"></span></div></div>
+      <p class="ptitle" id="p-title">蛊真人</p>
+      <p class="psub" id="p-sub">第 37 章 · 三岔口　老宝玉 演播</p>
+
+      <div class="times"><span id="p-cur">12:34</span><span class="rem" id="p-rem">本章还剩 17:26</span><span id="p-total">30:00</span></div>
+      <div class="pbar" id="p-bar"><i style="width:42%"></i><b style="left:42%"></b></div>
+
+      <div class="ctrls">
+        <button class="ru">15</button>
+        <button class="big" id="p-play"><span style="display:flex;gap:3px"><span style="width:4px;height:17px;background:#FAFAF8;border-radius:1px"></span><span style="width:4px;height:17px;background:#FAFAF8;border-radius:1px"></span></span></button>
+        <button class="ru">30</button>
+      </div>
+
+      <div class="chips">
+        <button class="chip act" data-pop="speed" id="c-speed">1.25x</button>
+        <button class="chip" data-pop="timer" id="c-timer">定时</button>
+        <button class="chip" id="c-chapters">章节 37/1204</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 详情页 -->
+  <div class="sheet" id="detail">
+    <div class="sh-hd">
+      <button class="bk" data-close="detail">‹ 返回</button>
+      <span class="ttl">书籍详情</span>
+      <span style="width:44px"></span>
+    </div>
+    <div class="sh-body">
+      <div class="dh">
+        <div class="cover" id="d-cover"><div class="inner"><span class="vt" id="d-vt"></span></div></div>
+        <div style="min-width:0">
+          <h2 id="d-title">蛊真人</h2>
+          <p class="au" id="d-author">老宝玉 演播</p>
+          <p class="mt" id="d-meta">1204 集 · 夸克网盘</p>
+        </div>
+      </div>
+      <button class="dplay" id="d-play">▶ 从第 37 章继续收听</button>
+      <div class="chs" id="d-chapters"></div>
+    </div>
+  </div>
+
+  <div class="mask" id="mask"></div>
+
+  <div class="pop" id="pop-speed">
+    <h3>播放速度</h3>
+    <div class="row" id="speed-opts"></div>
+  </div>
+  <div class="pop" id="pop-timer">
+    <h3>定时关闭</h3>
+    <div class="row" id="timer-opts"></div>
+  </div>
+</div>
+
+<script>
+// ---- 与 App 一致的取色：FNV-1a + 同 8 色出版色板 ----
+const PALETTE=['#1F3D33','#7A2E22','#1E2A4A','#8A5A2B','#4A2B45','#6B4A32','#34513F','#2E2E33'];
+function fnv1a(s){let h=0x811c9dc5;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=(h*0x01000193)>>>0}return h}
+const colorFor=t=>PALETTE[fnv1a((t||'书').trim()||'书')%PALETTE.length];
+function coreTitle(t){t=(t||'').trim();for(const s of ['-','–','—','_','·','|','｜','：',':','/','\\']){const i=t.indexOf(s);if(i>=2)return t.slice(0,i).trim()}return t}
+const vertTitle=(t,n=4)=>[...(coreTitle(t)||'书')].slice(0,n).join('');
+
+const BOOKS=[
+  {t:'蛊真人',a:'老宝玉',cur:true,p:.42,remain:'17:26'},
+  {t:'诡秘之主',a:'多人有声剧',p:.74},
+  {t:'全职法师',a:'金菲惜比',p:.31},
+  {t:'三体',a:'李野墨',p:0},
+  {t:'活着',a:'陈墨',p:.96},
+  {t:'斗破苍穹',a:'小柒',p:.12},
+];
+
+// ---- 渲染封面 ----
+function paint(el,title,author){
+  el.style.background=colorFor(title);
+  const vt=el.querySelector('.vt'); if(vt) vt.textContent=vertTitle(title);
+  const au=el.querySelector('.au'); if(au) au.textContent=author?author.slice(0,4):'';
+}
+// 英雄区
+paint(document.getElementById('hero-cover'),BOOKS[0].t);
+document.getElementById('hero-au').textContent=BOOKS[0].a;
+
+// 栏目
+function rail(el,list){
+  el.innerHTML='';
+  list.forEach(b=>{
+    const d=document.createElement('div'); d.className='item';
+    d.innerHTML=`<div class="cover"><div class="inner"><span class="vt"></span></div></div>
+      <p class="nm"></p><p class="sb"></p>
+      ${b.p>0?'<div class="bar"><i style="width:'+(b.p*100)+'%"></i></div>':''}`;
+    paint(d.querySelector('.cover'),b.t);
+    d.querySelector('.nm').textContent=b.t;
+    d.querySelector('.sb').textContent=b.p>0?('第 '+Math.max(1,Math.round(b.p*1204))+' 章'):(b.a);
+    d.onclick=()=>openPlayer(b);
+    el.appendChild(d);
+  });
+}
+rail(document.getElementById('rail-1'),BOOKS.slice(1,5));
+rail(document.getElementById('rail-2'),BOOKS.slice(2,6));
+
+// 书架
+const grid=document.getElementById('shelf-grid');
+BOOKS.forEach(b=>{
+  const d=document.createElement('div');
+  d.innerHTML=`<div class="cover"><div class="inner"><span class="vt"></span></div></div>
+    <p class="nm"></p><p class="mt"></p>`;
+  paint(d.querySelector('.cover'),b.t);
+  d.querySelector('.nm').textContent=b.t;
+  const pct=Math.round(b.p*100);
+  d.querySelector('.mt').textContent=b.p>0?('第 '+Math.max(1,Math.round(b.p*1204))+' 章 · 共 1204 章'):('共 1204 章');
+  let timer=null;
+  d.onclick=()=>{ if(timer){clearTimeout(timer);timer=null;return} openPlayer(b) };
+  d.addEventListener('touchstart',()=>{timer=setTimeout(()=>{timer=null;openDetail(b)},520)},{passive:true});
+  d.addEventListener('touchend',()=>{if(timer){clearTimeout(timer);timer=null}});
+  d.addEventListener('mousedown',()=>{timer=setTimeout(()=>{timer=null;openDetail(b)},520)});
+  d.addEventListener('mouseup',()=>{if(timer){clearTimeout(timer);timer=null}});
+  grid.appendChild(d);
+});
+
+// 历史
+const hist=document.getElementById('hist-list');
+BOOKS.slice(0,4).forEach((b,i)=>{
+  const row=document.createElement('div');
+  row.style.cssText='padding:14px 0;border-bottom:.5px solid var(--hair)';
+  row.innerHTML=`<p style="margin:0;font-size:14px;font-weight:500">${b.t}</p>
+    <p style="margin:4px 0 0 0;font-size:12px;color:var(--ink2)">第 ${Math.max(1,Math.round(b.p*1204))} 章 · 今天 ${9+i}:2${i}</p>`;
+  hist.appendChild(row);
+});
+// 统计
+document.getElementById('stats-body').innerHTML=
+ `<p style="font-size:12px;color:var(--ink3);margin:0">本周收听</p>
+  <p style="font-size:34px;font-weight:500;margin:6px 0 0 0">7 小时 42 分</p>
+  <p style="font-size:12px;color:var(--ink3);margin:22px 0 0 0">连续收听 6 天</p>
+  <p style="font-size:34px;font-weight:500;margin:6px 0 0 0">6</p>`;
+
+// ---- 交互 ----
+let current=BOOKS[0], playing=false, pos=12*60+34, total=30*60;
+const $=id=>document.getElementById(id);
+
+function openSheet(id){ $(id).classList.add('on') }
+function closeSheet(id){ $(id).classList.remove('on') }
+document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>closeSheet(b.dataset.close));
+
+function openPlayer(b){
+  current=b||current;
+  paint($('p-cover'),current.t);
+  $('p-title').textContent=current.t;
+  $('p-sub').textContent='第 37 章 · 三岔口　'+(current.a||'')+' 演播';
+  pos=Math.round(total*current.p);
+  playing=true; syncPlayer(); openSheet('player');
+}
+function openDetail(b){
+  current=b||current;
+  paint($('d-cover'),current.t);
+  $('d-title').textContent=current.t;
+  $('d-author').textContent=(current.a||'未知')+' 演播';
+  const list=$('d-chapters'); list.innerHTML='';
+  for(let i=35;i<=42;i++){
+    const btn=document.createElement('button');
+    if(i===37) btn.className='cur';
+    btn.innerHTML=`<span class="n">${i}</span><span class="t">第 ${i} 章 · 章节标题占位</span>${i===37?'<span class="tag">正在播放</span>':''}`;
+    list.appendChild(btn);
+  }
+  openSheet('detail');
+}
+function syncPlayer(){
+  const mm=s=>Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0');
+  const pct=pos/total;
+  $('p-cur').textContent=mm(pos);
+  $('p-rem').textContent='本章还剩 '+mm(total-pos);
+  $('p-bar').querySelector('i').style.width=(pct*100)+'%';
+  $('p-bar').querySelector('b').style.left=(pct*100)+'%';
+  $('hero-play').classList.toggle('playing',playing);
+  $('p-play').innerHTML = playing
+    ? '<span style="display:flex;gap:4px"><span style="width:4px;height:17px;background:#FAFAF8;border-radius:1px"></span><span style="width:4px;height:17px;background:#FAFAF8;border-radius:1px"></span></span>'
+    : '<span style="width:0;height:0;border-left:13px solid #FAFAF8;border-top:8px solid transparent;border-bottom:8px solid transparent;margin-left:4px"></span>';
+  $('mini-icon').innerHTML = playing ? '<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>' : '<path d="M8 5v14l11-7z"/>';
+  $('hero-rem').textContent='本章还剩 '+mm(total-pos);
+  $('hero-title').textContent=current.t;
+}
+$('hero-play').onclick=()=>{playing=!playing;syncPlayer()};
+$('p-play').onclick=()=>{playing=!playing;syncPlayer()};
+$('mini-play').onclick=()=>{playing=!playing;syncPlayer()};
+setInterval(()=>{ if(playing){ pos=Math.min(total,pos+1); syncPlayer(); } },1000);
+
+// 顶部栏目
+document.querySelectorAll('nav .tab').forEach(t=>t.onclick=()=>{
+  document.querySelectorAll('nav .tab').forEach(x=>x.classList.toggle('on',x===t));
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('on'));
+  $('s-'+t.dataset.tab).classList.add('on');
+});
+
+// 底部选择面板
+function openPop(id){ $('mask').classList.add('on'); $(id).classList.add('on') }
+function closePop(){ $('mask').classList.remove('on');
+  document.querySelectorAll('.pop').forEach(p=>p.classList.remove('on')) }
+$('mask').onclick=closePop;
+$('c-speed').onclick=()=>openPop('pop-speed');
+$('c-timer').onclick=()=>openPop('pop-timer');
+$('c-chapters').onclick=()=>openDetail(current);
+$('d-play').onclick=()=>{closeSheet('detail');openPlayer(current)};
+$('hero-cover').onclick=()=>openPlayer(BOOKS[0]);
+
+const speeds=[0.75,1,1.25,1.5,2];
+$('speed-opts').innerHTML=speeds.map(s=>`<button class="opt${s===1.25?' act':''}" data-s="${s}">${s}x</button>`).join('');
+$('speed-opts').onclick=e=>{
+  const b=e.target.closest('.opt'); if(!b)return;
+  [...$('speed-opts').children].forEach(x=>x.classList.toggle('act',x===b));
+  $('c-speed').textContent=b.dataset.s+'x'; closePop();
+};
+const timers=[15,30,60];
+$('timer-opts').innerHTML=timers.map(m=>`<button class="opt" data-m="${m}">${m} 分钟</button>`).join('')
+  +'<button class="opt" data-m="0">取消定时</button>';
+$('timer-opts').onclick=e=>{
+  const b=e.target.closest('.opt'); if(!b)return;
+  const m=+b.dataset.m;
+  $('c-timer').textContent = m? (m+' 分钟') : '定时';
+  $('c-timer').classList.toggle('act', !!m);
+  closePop();
+};
+
+paint($('mini-cv'),BOOKS[0].t);
+syncPlayer();
+</script>
+</body>
+</html>

@@ -1,11 +1,18 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:audiobook_app/models/bookshelf_book.dart';
 import 'package:audiobook_app/models/playback_progress.dart';
 import 'package:audiobook_app/pages/bookshelf_page.dart';
+import 'package:audiobook_app/pages/listening_page.dart';
 
-/// 「继续收听」卡的取记录逻辑回归。
-///
-/// 这条逻辑决定了用户打开 App 第一眼看到哪本书 —— 判错就会把人指向一本
-/// 早就听完的。它也是首屏唯一的一处纯逻辑，所以单独锁住。
+/// 首屏（「在听」页）的两处纯逻辑回归：
+/// 1. 取「最近一次收听」记录 —— 决定打开 App 第一眼看到哪本书；
+/// 2. 期号编号 —— 「有声杂志」方向的签名元素，编错了会很显眼。
+
+BookshelfBook _book(String id, {int daysAgo = 0}) => BookshelfBook(
+      id: id,
+      title: id,
+      addedAt: DateTime(2026, 9, 24).subtract(Duration(days: daysAgo)),
+    );
 
 PlaybackProgress _p(
   String bookId, {
@@ -58,6 +65,28 @@ void main() {
       final picked = latestPlaybackProgress(all);
       expect(picked, isNotNull);
       expect(['a', 'b'], contains(picked!.bookId));
+    });
+  });
+
+  group('期号编号（有声杂志的签名元素）', () {
+    test('按入库顺序编号，老书是 NO.01', () {
+      final ordered = [_book('a'), _book('b'), _book('c')];
+      expect(ListeningPage.issueNumber(ordered, 'a'), 'NO.01');
+      expect(ListeningPage.issueNumber(ordered, 'c'), 'NO.03');
+    });
+
+    test('补零到两位：第 7 本是 NO.07 而不是 NO.7', () {
+      final ordered = List.generate(9, (i) => _book('b$i'));
+      expect(ListeningPage.issueNumber(ordered, 'b6'), 'NO.07');
+    });
+
+    test('超过 99 本不截断（两位数自然增长）', () {
+      final ordered = List.generate(105, (i) => _book('b$i'));
+      expect(ListeningPage.issueNumber(ordered, 'b104'), 'NO.105');
+    });
+
+    test('书不在列表里时返回空串，让调用方不画那一行', () {
+      expect(ListeningPage.issueNumber([_book('a')], 'zzz'), '');
     });
   });
 }

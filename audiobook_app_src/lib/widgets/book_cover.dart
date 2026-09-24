@@ -29,6 +29,7 @@ class BookCover extends StatelessWidget {
     this.borderRadius,
     this.memCacheWidth = 300,
     this.fallbackChar = '书',
+    this.elevated = true,
   });
 
   /// 书名。同时用于生成封面的选色与竖排取字。
@@ -58,6 +59,12 @@ class BookCover extends StatelessWidget {
   /// 书名全空时的兜底字。
   final String fallbackChar;
 
+  /// 是否呈现「实体书」质感（设计规范 §4：细描边 + 极淡投影）。
+  ///
+  /// 封面不再是一块平铺的色块，而像一本放在桌上的书 —— 这是「有声杂志」
+  /// 方向的签名元素之一。极小尺寸的缩略图（迷你播放条）可关掉以省绘制。
+  final bool elevated;
+
   BorderRadius get _radius => borderRadius ?? BorderRadius.circular(10);
 
   @override
@@ -65,7 +72,7 @@ class BookCover extends StatelessWidget {
     final image = _buildImage(context);
     final showBar = progress != null && progress! > 0;
 
-    return ClipRRect(
+    final content = ClipRRect(
       borderRadius: _radius,
       child: Stack(
         fit: StackFit.expand,
@@ -92,6 +99,23 @@ class BookCover extends StatelessWidget {
             ),
         ],
       ),
+    );
+
+    if (!elevated) return content;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: _radius,
+        border: Border.all(color: const Color(0x1A000000), width: 0.5),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x1F000000),
+            blurRadius: 3,
+            offset: Offset(0, 1),
+          ),
+        ],
+      ),
+      child: content,
     );
   }
 
@@ -216,44 +240,65 @@ class _GeneratedCover extends StatelessWidget {
             decoration: BoxDecoration(
               border: Border.all(color: AppCoverPalette.frame, width: 0.5),
             ),
-            padding: EdgeInsets.symmetric(horizontal: pad * 0.5),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
+            child: Stack(
               children: [
-                Text(
-                  vertical,
-                  textAlign: TextAlign.center,
-                  maxLines: lineCount,
-                  style: TextStyle(
-                    color: AppCoverPalette.ink,
-                    fontSize: fontSize,
-                    fontWeight: FontWeight.w500,
-                    height: 1.16,
-                  ),
-                ),
-                if (hasAuthor) ...[
-                  SizedBox(height: h * 0.05),
-                  Container(
-                    width: w * 0.16,
-                    height: 1,
-                    color: AppCoverPalette.rule,
-                  ),
-                  SizedBox(height: h * 0.035),
-                  Text(
-                    author!.trim(),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      // 0.95 而不是更低：更低的透明度会让「赭石」底色上的作者行
-                      // 掉到 4:1 以下（实测 0.82 时为 3.98:1，不达 WCAG AA）。
-                      // 0.95 在全部 8 个出版色上均 ≥ 4.7:1，见设计系统 §8。
-                      color: AppCoverPalette.ink.withValues(alpha: 0.95),
-                      fontSize: (w * 0.085).clamp(9.0, 13.0).toDouble(),
-                      fontWeight: FontWeight.w400,
+                // 书名垂直居中：它是封面的主体，不跟任何东西对齐。
+                Center(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(horizontal: pad * 0.5),
+                    child: Text(
+                      vertical,
+                      textAlign: TextAlign.center,
+                      maxLines: lineCount,
+                      style: TextStyle(
+                        color: AppCoverPalette.ink,
+                        fontSize: fontSize,
+                        fontWeight: FontWeight.w500,
+                        height: 1.16,
+                      ),
                     ),
                   ),
-                ],
+                ),
+                // 演播署名钉在底部 —— 实体书封面就是这么排的：
+                // 书名居中、署名在下方留白里，而不是紧贴在书名下面。
+                if (hasAuthor)
+                  Align(
+                    alignment: Alignment.bottomCenter,
+                    child: Padding(
+                      padding: EdgeInsets.only(
+                        bottom: h * 0.075,
+                        left: pad * 0.4,
+                        right: pad * 0.4,
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: w * 0.16,
+                            height: 1,
+                            color: AppCoverPalette.rule,
+                          ),
+                          SizedBox(height: h * 0.028),
+                          Text(
+                            author!.trim(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              // 0.95 而不是更低：更低的透明度会让「赭石」底色上的
+                              // 作者行掉到 4:1 以下（实测 0.82 时为 3.98:1，
+                              // 不达 WCAG AA）。0.95 在全部 8 个出版色上均 ≥4.7:1。
+                              color: AppCoverPalette.ink
+                                  .withValues(alpha: 0.95),
+                              fontSize:
+                                  (w * 0.085).clamp(9.0, 13.0).toDouble(),
+                              fontWeight: FontWeight.w400,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),

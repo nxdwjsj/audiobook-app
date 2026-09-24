@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../theme/app_theme.dart';
 import '../widgets/frosted_glass.dart';
+import 'listening_page.dart';
 import 'bookshelf_page.dart';
 import 'history_page.dart';
 import 'stats_page.dart';
@@ -17,19 +18,20 @@ class _HomePageState extends State<HomePage> {
   int _currentIndex = 0;
 
   static const List<Widget> _pages = [
+    ListeningPage(),
     BookshelfPage(),
     HistoryPage(),
     StatsPage(),
   ];
 
-  /// 手势/返回键联动：在非书架 tab 按返回，先切回书架；
-  /// 已在书架时再按一次才真正退出（回到桌面）。
+  /// 手势/返回键联动：在非「在听」tab 按返回，先切回「在听」；
+  /// 已在「在听」时再按一次才真正退出（回到桌面）。
   Future<bool> _onWillPop() async {
     if (_currentIndex != 0) {
       setState(() => _currentIndex = 0);
       return false; // 拦截，不退出
     }
-    // 已在书架：移动到后台而不是直接杀进程，符合常见听书 App 习惯
+    // 已在首屏：移动到后台而不是直接杀进程，符合常见听书 App 习惯
     await SystemNavigator.pop();
     return false;
   }
@@ -67,6 +69,11 @@ class _HomePageState extends State<HomePage> {
                 setState(() => _currentIndex = index);
               },
               destinations: const [
+                NavigationDestination(
+                  icon: Icon(Icons.headphones_outlined),
+                  selectedIcon: Icon(Icons.headphones_rounded),
+                  label: '在听',
+                ),
                 NavigationDestination(
                   icon: Icon(Icons.library_books_outlined),
                   selectedIcon: Icon(Icons.library_books_rounded),
