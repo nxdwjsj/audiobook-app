@@ -12,8 +12,9 @@
 - 应用名：`audiobook_app`，显示名「聆云」
 - 版本：`1.1.4+24`（与 `pubspec.yaml` 一致）
 - 平台目录：仅 `android/`（iOS 与 Web 平台目录已在 1.1.0 移除，不再维护）
+- **视觉与交互规范**：改版前必读 [`docs/DESIGN-SYSTEM.md`](docs/DESIGN-SYSTEM.md)（基调：杂志感 · 封面为王）
 - **下载安装**：[Releases · 最新版](https://github.com/nxdwjsj/audiobook-app/releases/latest) → 下载对应的 APK 安装（release 构建、debug 签名、**仅 arm64**）
-- 仓库内副本：`releases/`（本地构建产物目录）
+- 仓库内另有副本：`releases/`（本地构建产物的归档目录，**下载请走上面的 Release**，那里才是最新可装包）
 - ⚠️ 仍是用 **debug 签名**的演示包：更换正式签名会导致无法覆盖安装、卸载即丢数据，故必须先有「数据导出/导入」能力才能动（产物命名统一见优化方案 MAINT-06）
 
 **技术栈**
