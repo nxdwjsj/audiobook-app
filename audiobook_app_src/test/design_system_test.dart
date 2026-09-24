@@ -3,6 +3,7 @@ import 'dart:math' show pow;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:audiobook_app/theme/app_theme.dart';
 import 'package:audiobook_app/theme/app_tokens.dart';
 import 'package:audiobook_app/widgets/book_cover.dart';
 
@@ -234,6 +235,43 @@ void main() {
           greaterThanOrEqualTo(4.5),
           reason: '封面色 $bg 上的作者行对比度不足（透明度 $authorAlpha）',
         );
+      }
+    });
+  });
+
+  group('主色：墨色而不是彩色（规范 §1.2）', () {
+    /// 与色度无关的最大允许偏差（0..1）。M3 的 tonal palette 会保留 seed
+    /// 的一点点彩度，但换成彩色主色时偏差会远大于这个数。
+    const tolerance = 0.02;
+
+    bool isNeutral(Color c) =>
+        (c.r - c.g).abs() < tolerance && (c.g - c.b).abs() < tolerance;
+
+    test('seed 就是规范里的墨色，且是无彩色', () {
+      expect(AppTheme.seedColor, const Color(0xFF3A3A3A));
+      expect(isNeutral(AppTheme.seedColor), isTrue,
+          reason: 'seed 带色偏：${AppTheme.seedColor}');
+    });
+
+    test('浅色 / 深色主题的 primary 都不带色偏', () {
+      for (final entry in {
+        'light': AppTheme.lightTheme(),
+        'dark': AppTheme.darkTheme(),
+      }.entries) {
+        final primary = entry.value.colorScheme.primary;
+        expect(isNeutral(primary), isTrue,
+            reason: '${entry.key} 的 primary 带色偏：$primary');
+      }
+    });
+
+    test('进度指示器用强调色，不跟随主色（否则一片灰）', () {
+      for (final entry in {
+        'light': AppTheme.lightTheme(),
+        'dark': AppTheme.darkTheme(),
+      }.entries) {
+        final color = entry.value.progressIndicatorTheme.color;
+        expect(color, isNotNull, reason: '${entry.key} 未指定进度色');
+        expect(color, AppInk.accent(entry.key == 'dark'));
       }
     });
   });

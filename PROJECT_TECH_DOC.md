@@ -1,7 +1,7 @@
 # 聆云（audiobook_app）项目技术文档
 
 > 项目路径：`D:\Project\TraeWorkspace\audiobook\audiobook_app_src`
-> 当前版本：`1.3.0+30`（发布 APK 仅 arm64）
+> 当前版本：`1.4.0+31`（发布 APK 仅 arm64）
 
 ---
 
@@ -85,19 +85,20 @@ audiobook_app_src/
 
 | 项 | 配置 |
 |---|---|
-| 主色（种子色） | `seed_color = Color(0xFF5B4FE9)`（紫罗兰），由它派生完整 ColorScheme（primary / secondary / tertiary / surface 系列） |
-| 浅色主题背景 | 顶部 `Color(0xFFF3F0FF)`（淡紫） → 底部 `Color(0xFFFBFBFE)` 的垂直渐变（`pageGradient`） |
-| 深色主题背景 | 顶部 `Color(0xFF1A1727)` → 底部 `Color(0xFF121016)` |
-| 文字颜色 | 全部取 `scheme.onSurface` / `scheme.onSurfaceVariant`，**无硬编码文字色** |
-| 卡片 | elevation 0、圆角 18、描边 `outlineVariant`（浅色 alpha 0.45 / 深色 0.22）、浅色纯白 / 深色 `surfaceContainerLow` |
-| 输入框 | 圆角 16、filled、focus 态 `scheme.primary` 描边 1.6 |
+| 主色（种子色） | `seedColor = Color(0xFF3A3A3A)`（**墨色**，v1.4.0 起；此前为紫罗兰 `#5B4FE9`） |
+| ColorScheme 派生 | `ColorScheme.fromSeed` 只用来兜住未显式指定的槽位；**primary / secondary / tertiary / surface / outline / error 必须 `copyWith` 显式指定** —— 中性 seed（`r=g=b`）的 HCT 色相未定义，M3 会派生出青色 primary（实测 `0xFF006874`）。详见设计规范 §1.2 |
+| 强调色 | `AppInk.accent`：浅色 `#1F6F4A` / 深色 `#52B584`，只用于进度、链接、成功提示；`progressIndicatorTheme` 也走它（跟随主色会是一片灰） |
+| 页面背景 | 浅 `#FAFAF8` / 深 `#141414` **纯色**；紫调渐变已取消，`pageGradient` 两个色标取同值 |
+| 文字颜色 | 走 `AppInk` 三档令牌（primary / secondary / tertiary），均过 WCAG AA 且有守卫测试 |
+| 卡片 | elevation 1、圆角 16、**无描边**（描边在纸白底上显脏）、浅色纯白 / 深色 `surfaceContainerLow` |
+| 输入框 | 圆角 16、filled、focus 态 `scheme.primary`（墨色）描边 1.6 |
 | BottomSheet | 顶部圆角 24 |
 | Dialog | 圆角 24、浅色白 / 深色 `surfaceContainerLow` |
-| AppBar | 透明背景（露出页面渐变）、标题 19/w600 |
-| **低饱和灰蓝** | **没有**。当前为饱和紫罗兰色系；全项目无灰蓝色常量 |
-| **颜色常量定义位置** | 仅 `app_theme.dart` 顶部的 `seed_color` 与 `pageTopColor` / `pageBottomColor`；页面内个别硬编码色在各自文件内 |
+| AppBar | 透明背景、标题 19 / **w500**（字重只允许 400 与 500） |
+| **颜色常量定义位置** | `app_theme.dart`（seed + 派生覆盖）、`app_tokens.dart`（`AppInk` 中性阶、`AppCoverPalette` 封面色板） |
 
-> 改主题只需改 `seed_color` 一个值即可全局换色（M3 自动派生），页面背景色需要同步改 `pageTopColor` / `pageBottomColor`。
+> 换主色不能只改 `seedColor` 一个值：中性 seed 会让 M3 派生出带色偏的 primary，
+> 必须同步改 `copyWith` 里的显式槽位，并跑 `flutter test test/design_system_test.dart`。
 
 ---
 
@@ -225,7 +226,7 @@ audiobook_app_src/
 name: audiobook_app
 description: 聆云 - 网盘有声书播放器（直接播放网盘音频文件夹，管理目录、进度与收听历史）
 publish_to: 'none'
-version: 1.3.0+30
+version: 1.4.0+31
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

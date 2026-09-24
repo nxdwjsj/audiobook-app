@@ -12,7 +12,6 @@ import '../repositories/book_source_repository.dart';
 import '../repositories/progress_repository.dart';
 import '../services/audio_player_service.dart';
 import '../services/book_source/online_book_hit.dart';
-import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../widgets/book_cover.dart';
@@ -34,6 +33,10 @@ class ShelfBookDetailPage extends StatefulWidget {
 class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
   final _scrollController = ScrollController();
   bool _scrolledToPlaying = false;
+
+  /// 简介默认收起（4 行），点「展开」看全文。长简介在详情页占掉首屏，
+  /// 而首屏最该出现的是封面与目录。
+  bool _descriptionExpanded = false;
 
   /// 目录排序：false = 正序（第 1 集在上），true = 倒序（最新在上）。
   bool _descending = false;
@@ -119,10 +122,18 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
     if (!mounted) return;
     if (!force && _scrolledToPlaying) return;
     final player = context.read<AudioPlayerService>();
-    if (!player.hasBook || player.currentBook!.id != widget.book.id) {
-      return;
+    final int index;
+    if (player.hasBook && player.currentBook!.id == widget.book.id) {
+      index = player.currentChapterIndex;
+    } else {
+      // 这本书没在播：定位到上次听到的位置 —— 按「定位」的人想找回自己的进度，
+      // 而不是被无声忽略（旧实现在非在播状态下直接 return，按钮像坏了）。
+      index = context
+              .read<ProgressRepository>()
+              .getProgress(widget.book.id)
+              ?.chapterIndex ??
+          0;
     }
-    final index = player.currentChapterIndex;
     _scrolledToPlaying = true;
     if (index < 0 || _chapters.isEmpty || index >= _chapters.length) return;
 
@@ -175,12 +186,11 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
     final isCurrent = player.hasBook && player.currentBook!.id == _book.id;
 
     return Scaffold(
+      backgroundColor: AppTheme.pageTopColor(Theme.of(context).brightness),
       appBar: AppBar(
-        title: Text(
-          _book.title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
+        // 顶栏**不带标题**：头部 Hero 已经用 display 字号放了书名，
+        // 再在顶栏放一次是重复噪声（也占一整行）。这里只留返回与动作。
+        toolbarHeight: 48,
         actions: [
           // 编辑信息（封面/作者/简介）
           IconButton(
@@ -208,14 +218,7 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
           ),
         ],
       ),
-      // 顶栏透明 + 背景取渐变首色，body 用同色渐变衔接
-      backgroundColor: AppTheme.pageTopColor(Theme.of(context).brightness),
-      body: DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: AppTheme.pageGradient(Theme.of(context).brightness),
-        ),
-        child: _buildBody(context, isCurrent, player, progress),
-      ),
+      body: _buildBody(context, isCurrent, player, progress),
       bottomNavigationBar: _buildBottomBar(context, isCurrent, player, progress),
     );
   }
@@ -223,99 +226,187 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
   Widget _buildBody(BuildContext context, bool isCurrent,
       AudioPlayerService player, PlaybackProgress? progress) {
     final chapters = _displayChapters;
-    // 行内高频用到的值先取好，避免每行都做一次 InheritedWidget 查找
-    final primary = Theme.of(context).colorScheme.primary;
-    const headerCount = 4; // header + stats + 目录标题 + 分页条
-    return Stack(
-      children: [
-        ListView.builder(
-          controller: _scrollController,
-          // 底部留出浮动按钮组的空间，避免最后一行被遮挡
-          padding: const EdgeInsets.only(bottom: 80),
-          itemCount: headerCount + chapters.length,
-          itemBuilder: (context, index) {
-            if (index == 0) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildHeader(context),
-                  if (_book.description != null &&
-                      _book.description!.isNotEmpty)
-                    _buildDescription(context),
-                ],
-              );
-            }
-            if (index == 1) return _buildStatsRow(context, progress);
-            if (index == 2) return _buildChapterTitle(context, _chapters.length);
-            if (index == 3) return _buildPageSelector(context);
-            final rowIndex = index - headerCount;
-            // 当前页数据已应用排序，映射回真实章节下标
-            final pageStart = _page * _pageSize;
-            final chapterIndex = _descending
-                ? _chapters.length - 1 - (pageStart + rowIndex)
-                : pageStart + rowIndex;
-            final chapter = chapters[rowIndex];
-            final isPlayingChapter =
-                isCurrent && chapterIndex == player.currentChapterIndex;
-            return ListTile(
-              key: _chapterRowKeys[chapterIndex] ??= GlobalKey(),
-              dense: true,
-              leading: isPlayingChapter
-                  ? Icon(Icons.graphic_eq_rounded, color: primary)
-                  : Text('${chapterIndex + 1}'),
-              title: Text(
-                chapter.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontWeight:
-                      isPlayingChapter ? FontWeight.w500 : FontWeight.normal,
-                  color: isPlayingChapter ? primary : null,
-                ),
-              ),
-              trailing: isPlayingChapter
-                  ? Text(
-                      '正在播放',
-                      style: AppType.micro.copyWith(color: primary),
-                    )
-                  : null,
-              onTap: () => _playChapter(context, chapterIndex),
-            );
-          },
-          // 添加缓存扩展以提高滚动性能
-          scrollCacheExtent: const ScrollCacheExtent.pixels(2000),
-        ),
-        // 聚合浮动小圆钮：点击展开竖排菜单（回顶/定位/排序），可拖动并记忆位置
-        _ChapterFab(
-          scrollController: _scrollController,
-          descending: _descending,
-          onLocate: () => _scrollToPlaying(force: true),
-          onToggleOrder: () {
-            setState(() => _descending = !_descending);
-            if (_scrollController.hasClients) {
-              _scrollController.jumpTo(0);
-            }
-          },
-        ),
-      ],
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    // header + 简介 + 目录工具行 + 分页条
+    const headerCount = 4;
+    return ListView.builder(
+      controller: _scrollController,
+      // 底部留出底部动作条的空间，避免最后一行被遮挡
+      padding: const EdgeInsets.only(bottom: 96),
+      itemCount: headerCount + chapters.length,
+      itemBuilder: (context, index) {
+        if (index == 0) return _buildHeader(context, progress, isDark);
+        if (index == 1) return _buildDescription(context, isDark);
+        if (index == 2) return _buildSectionRow(context, isDark);
+        if (index == 3) return _buildPageSelector(context, isDark);
+        final rowIndex = index - headerCount;
+        // 当前页数据已应用排序，映射回真实章节下标
+        final pageStart = _page * _pageSize;
+        final chapterIndex = _descending
+            ? _chapters.length - 1 - (pageStart + rowIndex)
+            : pageStart + rowIndex;
+        return _buildChapterRow(
+          context: context,
+          chapterIndex: chapterIndex,
+          chapter: chapters[rowIndex],
+          isPlaying: isCurrent && chapterIndex == player.currentChapterIndex,
+          isDark: isDark,
+        );
+      },
+      // 添加缓存扩展以提高滚动性能
+      scrollCacheExtent: const ScrollCacheExtent.pixels(2000),
     );
   }
 
-  /// 目录标题行（仅标题，按钮在浮动工具条上）。
-  Widget _buildChapterTitle(BuildContext context, int chapterCount) {
+  /// 目录区的一行：左「目录 N 集」，右三个工具（排序 / 定位 / 回顶）。
+  ///
+  /// 此前这三个动作收在一个**可拖动的浮动圆钮**里（点开才展开菜单），
+  /// 与全局悬浮球是同一种反模式：要记住它藏在哪、还要多点一次。
+  /// 常驻播放条已经占住底部，目录工具就固定放在目录标题这一行 ——
+  /// 它属于目录，而不是浮在整页之上。
+  Widget _buildSectionRow(BuildContext context, bool isDark) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-      child: Text(
-        chapterCount == 0 ? '暂无章节信息' : '目录（$chapterCount 集）',
-        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.md, 4, 0),
+      child: Row(
+        children: [
+          Text(
+            '目录',
+            style: AppType.body.copyWith(
               fontWeight: FontWeight.w500,
+              color: AppInk.primary(isDark),
             ),
+          ),
+          const SizedBox(width: AppSpacing.xs),
+          Text(
+            '${_chapters.length} 集',
+            style: AppType.caption.copyWith(color: AppInk.tertiary(isDark)),
+          ),
+          const Spacer(),
+          _toolButton(
+            context,
+            isDark: isDark,
+            icon: _descending ? Icons.south_rounded : Icons.north_rounded,
+            tooltip: _descending ? '改为正序' : '改为倒序',
+            onPressed: () {
+              setState(() => _descending = !_descending);
+              if (_scrollController.hasClients) {
+                _scrollController.jumpTo(0);
+              }
+            },
+          ),
+          _toolButton(
+            context,
+            isDark: isDark,
+            icon: Icons.my_location_rounded,
+            tooltip: '定位到当前集',
+            onPressed: () => _scrollToPlaying(force: true),
+          ),
+          _toolButton(
+            context,
+            isDark: isDark,
+            icon: Icons.vertical_align_top_rounded,
+            tooltip: '回到顶部',
+            onPressed: () {
+              if (_scrollController.hasClients) {
+                _scrollController.animateTo(
+                  0,
+                  duration: AppMotion.list,
+                  curve: AppMotion.standard,
+                );
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _toolButton(
+    BuildContext context, {
+    required bool isDark,
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onPressed,
+  }) {
+    return IconButton(
+      icon: Icon(icon, size: 20),
+      color: AppInk.secondary(isDark),
+      tooltip: tooltip,
+      onPressed: onPressed,
+    );
+  }
+
+  /// 章节行：集号右对齐成一列 + 标题 + 正在播放标记。
+  ///
+  /// 正在播放的行用**左侧 2px 强调色竖条**表达 —— 与常驻迷你播放条顶边的
+  /// 进度线是同一种语言，不用给整行铺底色（铺底色在长目录里会闪成一片）。
+  Widget _buildChapterRow({
+    required BuildContext context,
+    required int chapterIndex,
+    required Chapter chapter,
+    required bool isPlaying,
+    required bool isDark,
+  }) {
+    final accent = AppInk.accent(isDark);
+    return InkWell(
+      key: _chapterRowKeys[chapterIndex] ??= GlobalKey(),
+      onTap: () => _playChapter(context, chapterIndex),
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border(
+            left: BorderSide(
+              color: isPlaying ? accent : Colors.transparent,
+              width: 2,
+            ),
+          ),
+        ),
+        padding: const EdgeInsets.fromLTRB(14, 10, 16, 10),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 30,
+              child: Text(
+                '${chapterIndex + 1}',
+                textAlign: TextAlign.right,
+                style: AppType.micro.copyWith(
+                  color: isPlaying ? accent : AppInk.tertiary(isDark),
+                ),
+              ),
+            ),
+            const SizedBox(width: AppSpacing.md),
+            Expanded(
+              child: Text(
+                chapter.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppType.body.copyWith(
+                  fontWeight: isPlaying ? FontWeight.w500 : FontWeight.w400,
+                  color: isPlaying
+                      ? AppInk.primary(isDark)
+                      : AppInk.secondary(isDark),
+                ),
+              ),
+            ),
+            if (isPlaying) ...[
+              const SizedBox(width: AppSpacing.sm),
+              Icon(Icons.graphic_eq_rounded, size: 16, color: accent),
+              const SizedBox(width: AppSpacing.xs),
+              Text(
+                '正在播放',
+                style: AppType.micro.copyWith(color: accent),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
 
   /// 分页条：1-300 / 301-600 / …，点击切换当前显示的章节区间。
-  Widget _buildPageSelector(BuildContext context) {
+  ///
+  /// 规范 §3：芯片/卡片**不用描边**，选中态改用墨色实底（与未选中的次级灰
+  /// 形成对比），描边在纸白底上只会显脏。
+  Widget _buildPageSelector(BuildContext context, bool isDark) {
     if (_pageCount <= 1) return const SizedBox.shrink();
     // 每个 chip 都要判断「是不是在播放页」，这里整体算一次就够
     final playingPage = _playingPageIndex;
@@ -323,7 +414,7 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
       height: 44,
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
         itemCount: _pageCount,
         itemBuilder: (ctx, i) {
           final s = i * _pageSize + 1;
@@ -331,16 +422,30 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
           final selected = i == _page;
           final isPlayingPage = i == playingPage;
           return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: ChoiceChip(
-              label: Text(
-                '$s-$e${isPlayingPage && !selected ? ' ⏵' : ''}',
-              ),
-              selected: selected,
-              onSelected: (_) => setState(() {
+            padding: const EdgeInsets.only(right: AppSpacing.sm),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(AppRadius.sm),
+              onTap: () => setState(() {
                 _page = i;
                 _scrolledToPlaying = true; // 手动切页后不再自动定位
               }),
+              child: Container(
+                height: 32,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: selected ? AppInk.solid(isDark) : Colors.transparent,
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                ),
+                child: Text(
+                  '$s-$e${isPlayingPage && !selected ? ' ⏵' : ''}',
+                  style: AppType.micro.copyWith(
+                    color: selected
+                        ? AppInk.onSolid(isDark)
+                        : AppInk.secondary(isDark),
+                  ),
+                ),
+              ),
             ),
           );
         },
@@ -348,18 +453,28 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
     );
   }
 
-  /// 详情页头部（设计规范 §5：封面为主角，文字层级靠字号与颜色对比建立）。
+  /// 详情页头部（设计规范 §5.8：与「在听」主打卡同一套语言）。
   ///
-  /// 此前标题用 `FontWeight.w500`，与规范「只用 400/500 两种字重」冲突；
-  /// 字号与颜色也都是硬编码的 theme 复制，换主题时会脱节。现统一走令牌。
-  Widget _buildHeader(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+  /// 封面放大到 132×176 并**可点直接续播** —— 进详情页最常见的目的就是
+  /// 「接着听这本」，不该还要先找到底部按钮。
+  /// 收听进度是「还要听多久」的依据，用强调色（规范 §1.2：进度 = 强调色）。
+  Widget _buildHeader(
+      BuildContext context, PlaybackProgress? progress, bool isDark) {
+    final total = _book.chapterCount;
+    final heard = progress?.chapterIndex ?? -1;
+    final percent =
+        (progress != null && total > 0) ? ((heard + 1) / total * 100).round() : 0;
     return Padding(
-      padding: const EdgeInsets.all(AppSpacing.lg),
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, AppSpacing.md),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildCover(context),
+          GestureDetector(
+            onTap: () => _resumePlay(
+                context, progress?.chapterIndex ?? 0, progress?.positionSeconds ?? 0),
+            child: _buildCover(),
+          ),
           const SizedBox(width: AppSpacing.lg),
           Expanded(
             child: Column(
@@ -370,16 +485,18 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
                   _book.title,
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
-                  style: AppType.title.copyWith(
+                  style: AppType.display.copyWith(
                     color: AppInk.primary(isDark),
                   ),
                 ),
                 const SizedBox(height: AppSpacing.sm),
                 Text(
-                  _book.author ?? '未知作者',
+                  _book.author == null || _book.author!.isEmpty
+                      ? '未知演播'
+                      : '${_book.author} 演播',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  // 作者署名用正文级：它是「谁演播的」，是用户选书的关键信息，
+                  // 演播署名用正文级：它是「谁演播的」，是用户选书的关键信息，
                   // 不该退化成灰色小字。
                   style: AppType.body.copyWith(
                     color: AppInk.secondary(isDark),
@@ -387,13 +504,24 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
                 ),
                 const SizedBox(height: AppSpacing.xs),
                 Text(
-                  '${_book.chapterCount} 集 · ${_sourceLabel()}',
+                  '$total 集 · ${_sourceLabel()}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: AppType.caption.copyWith(
                     color: AppInk.tertiary(isDark),
                   ),
                 ),
+                if (progress != null && percent > 0) ...[
+                  const SizedBox(height: AppSpacing.sm),
+                  Text(
+                    '已听到第 ${heard + 1} 集 · $percent%',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppType.micro.copyWith(
+                      color: AppInk.accent(isDark),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -431,52 +559,57 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
   /// 此前这里是「有自选图就画、有网络图就画、都没有就画渐变占位」的三份分支，
   /// 与书架页各写一套 —— 两处的降级行为、取色算法、圆角都不一致。
   /// 现在全部收敛到 BookCover，封面观感在书架与详情之间保持连续。
-  Widget _buildCover(BuildContext context) {
+  Widget _buildCover() {
     return SizedBox(
-      // 规范 §4：封面统一 3:4 竖版
-      width: 120,
-      height: 160,
+      // 规范 §4：封面统一 3:4 竖版；详情页与「在听」主打卡同档尺寸（132×176）
+      width: 132,
+      height: 176,
       child: BookCover(
         title: _book.title,
         author: _book.author,
         customImagePath: _book.localCoverPath,
         networkCoverUrl: _book.coverUrl,
         memCacheWidth: 600,
-        borderRadius: BorderRadius.circular(12),
       ),
     );
   }
 
-  Widget _buildDescription(BuildContext context) {
+  /// 简介：默认 4 行，点「展开」看全文。
+  ///
+  /// 收听进度已从这里的 Chip 移到头部（与书名同一屏），Chip 的描边与图标
+  /// 在纸白底上是最显脏的一块，也不承载新信息。
+  Widget _buildDescription(BuildContext context, bool isDark) {
+    final desc = _book.description;
+    if (desc == null || desc.isEmpty) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      child: Text(
-        _book.description!,
-        style: Theme.of(context).textTheme.bodyMedium,
-        maxLines: 4,
-        overflow: TextOverflow.ellipsis,
-      ),
-    );
-  }
-
-  Widget _buildStatsRow(BuildContext context, PlaybackProgress? progress) {
-    String stats;
-    if (progress != null && _book.chapterCount > 0) {
-      final percent =
-          ((progress.chapterIndex + 1) / _book.chapterCount * 100).round();
-      stats = '已听到第 ${progress.chapterIndex + 1} 集（$percent%）';
-    } else {
-      stats = '尚未收听';
-    }
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: Chip(
-          avatar: const Icon(Icons.headphones_rounded, size: 18),
-          label: Text(stats),
-          visualDensity: VisualDensity.compact,
-        ),
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.sm),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            desc,
+            style: AppType.body.copyWith(color: AppInk.secondary(isDark)),
+            maxLines: _descriptionExpanded ? null : 4,
+            overflow:
+                _descriptionExpanded ? TextOverflow.visible : TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          InkWell(
+            borderRadius: BorderRadius.circular(AppRadius.sm),
+            onTap: () =>
+                setState(() => _descriptionExpanded = !_descriptionExpanded),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.xs, vertical: AppSpacing.xs),
+              child: Text(
+                _descriptionExpanded ? '收起' : '展开',
+                style: AppType.micro.copyWith(color: AppInk.accent(isDark)),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -608,181 +741,3 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
     );
   }
 }
-
-/// 目录聚合浮动小圆钮（独立 State，拖动只重绘自身，不重建整页列表）：
-/// - 单击展开竖排菜单：回顶部 / 定位正在播放 / 正倒序切换
-/// - 长按整钮可拖动换位置（松手持久化），菜单展开时拖动无效
-/// - 默认悬浮于右下角
-class _ChapterFab extends StatefulWidget {
-  final ScrollController scrollController;
-  final bool descending;
-  final VoidCallback onLocate;
-  final VoidCallback onToggleOrder;
-
-  const _ChapterFab({
-    required this.scrollController,
-    required this.descending,
-    required this.onLocate,
-    required this.onToggleOrder,
-  });
-
-  @override
-  State<_ChapterFab> createState() => _ChapterFabState();
-}
-
-class _ChapterFabState extends State<_ChapterFab> {
-  static const double fabSize = 44;
-
-  /// null = 默认右下角
-  Offset? _offset;
-  bool _menuOpen = false;
-  bool _initialized = false;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (_initialized) return;
-    _offset = context.read<StorageService>().getChapterToolbarOffset();
-    _initialized = true;
-  }
-
-  Offset _defaultOffset(Size size) =>
-      Offset(size.width - fabSize - 16, size.height - 260);
-
-  void _onPan(DragUpdateDetails d) {
-    // 菜单展开时不允许拖（避免菜单和按钮错位）
-    if (_menuOpen) return;
-    setState(() {
-      final size = MediaQuery.of(context).size;
-      var dx = (_offset ?? _defaultOffset(size)).dx + d.delta.dx;
-      var dy = (_offset ?? _defaultOffset(size)).dy + d.delta.dy;
-      dx = dx.clamp(0.0, size.width - fabSize);
-      dy = dy.clamp(0.0, size.height - fabSize - 80);
-      _offset = Offset(dx, dy);
-    });
-  }
-
-  Future<void> _persist() async {
-    if (_offset == null) return;
-    await context
-        .read<StorageService>()
-        .saveChapterToolbarOffset(_offset!);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-    final pos = _offset ?? _defaultOffset(size);
-    final scheme = Theme.of(context).colorScheme;
-
-    return Stack(
-      children: [
-        // 竖排图标菜单：紧贴小圆钮上方；靠顶放不下时改放下方（绝不与圆钮重叠）
-        if (_menuOpen)
-          Builder(builder: (context) {
-            const menuHeight = 3 * 48 + 2 * 4;
-            var menuTop = pos.dy - menuHeight - 8;
-            if (menuTop < 8) menuTop = pos.dy + 44 + 8;
-            return Positioned(
-              left: pos.dx.clamp(0.0, size.width - 48),
-              top: menuTop,
-              child: _buildMenu(context, scheme),
-            );
-          }),
-        // 小圆钮本体
-        Positioned(
-          left: pos.dx,
-          top: pos.dy,
-          child: GestureDetector(
-            onPanUpdate: _onPan,
-            onPanEnd: (_) => _persist(),
-            onTap: () => setState(() => _menuOpen = !_menuOpen),
-            child: Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: scheme.primaryContainer,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.25),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Icon(
-                _menuOpen ? Icons.close_rounded : Icons.my_location_rounded,
-                color: scheme.onPrimaryContainer,
-                size: 22,
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildMenu(BuildContext context, ColorScheme scheme) {
-    Widget item(IconData icon, String tooltip, VoidCallback onTap) {
-      return Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(24),
-          onTap: () {
-            setState(() => _menuOpen = false);
-            onTap();
-          },
-          child: Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: scheme.surface,
-              shape: BoxShape.circle,
-              border: Border.all(
-                  color: scheme.outlineVariant.withValues(alpha: 0.5)),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.15),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Icon(icon, size: 22, color: scheme.primary),
-          ),
-        ),
-      );
-    }
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        item(
-          Icons.vertical_align_top_rounded,
-          '回到顶部',
-          () => widget.scrollController.hasClients
-              ? widget.scrollController.animateTo(
-                  0,
-                  duration: const Duration(milliseconds: 400),
-                  curve: Curves.easeOutCubic,
-                )
-              : null,
-        ),
-        const SizedBox(height: 4),
-        item(Icons.my_location_rounded, '定位播放', widget.onLocate),
-        const SizedBox(height: 4),
-        item(
-          widget.descending ? Icons.south_rounded : Icons.north_rounded,
-          widget.descending ? '改为正序' : '改为倒序',
-          widget.onToggleOrder,
-        ),
-      ],
-    );
-  }
-}
-
-/// 首字渐变占位封面（无封面时的默认显示）。
-// 旧的自绘占位封面已删除：与书架页那份是同一种「随机渐变 + 单个汉字 +
-// title.hashCode 取色」实现，两处各写一遍且色板还不一样。
-// 现统一由 widgets/book_cover.dart 的 BookCover 负责（设计规范 §4）。

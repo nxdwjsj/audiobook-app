@@ -1,5 +1,4 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter/rendering.dart' show Offset;
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/bookshelf_book.dart';
 import '../models/listen_session.dart';
@@ -180,26 +179,6 @@ class StorageService {
 
   bool getReduceMotion() => config.get('reduce_motion') as bool? ?? false;
 
-  /// 旧协议：贴边侧（true = 右）。无新坐标时用它推算初始 X。
-  Future<void> saveBallRight(bool right) async {
-    await config.put('ball_right', right);
-  }
-
-  bool getBallRight() => config.get('ball_right') as bool? ?? true;
-
-  // --- 详情页目录工具条位置（绝对像素，null = 默认右下角）---
-
-  Future<void> saveChapterToolbarOffset(Offset offset) async {
-    await config.put('chapter_toolbar_dx', offset.dx);
-    await config.put('chapter_toolbar_dy', offset.dy);
-  }
-
-  Offset? getChapterToolbarOffset() {
-    final dx = (config.get('chapter_toolbar_dx') as num?)?.toDouble();
-    final dy = (config.get('chapter_toolbar_dy') as num?)?.toDouble();
-    if (dx == null || dy == null) return null;
-    return Offset(dx, dy);
-  }
 }
 
 /// A no-op box implementation used when Hive is not available.

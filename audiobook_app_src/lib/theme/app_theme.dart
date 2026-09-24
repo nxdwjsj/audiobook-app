@@ -1,8 +1,19 @@
 import 'package:flutter/material.dart';
 
+import 'app_tokens.dart';
+
 /// App theme configuration following Material Design 3.
 class AppTheme {
-  static const Color seedColor = Color(0xFF5B4FE9);
+  /// 主色种子：**墨色 `#3A3A3A`（设计规范 §1.2）**。
+  ///
+  /// 原来是紫色 `#5B4FE9`。紫色的两个问题：①它是「2015 年的工具 App」观感，
+  /// 和封面（低饱和印刷色）打架；②它把「可交互」和「有内容」混成一种颜色，
+  /// 一本有声书的界面里真正该跳出来的只有封面与进度。
+  /// 改成墨色后，按钮与选中态靠**明度**区分，强调色（松绿）只留给进度。
+  ///
+  /// 由 `test/design_system_test.dart` 锁住：seed 必须是无彩色，
+  /// 否则有人随手换回彩色主色时不会有人发现。
+  static const Color seedColor = Color(0xFF3A3A3A);
 
   /// 页面底色（= 顶栏区域色）。单独暴露给单页 Scaffold 使用，
   /// 保证「顶栏 + body」之间没有色带。
@@ -32,9 +43,55 @@ class AppTheme {
 
   static ThemeData _build(Brightness brightness) {
     final isLight = brightness == Brightness.light;
+    final isDark = !isLight;
+
+    // 墨色（浅）/ 纸白（深）：主色只在可交互与选中态出现。
+    final ink = isLight ? const Color(0xFF3A3A3A) : const Color(0xFFEDEDED);
+    final onInk = isLight ? const Color(0xFFFAFAF8) : const Color(0xFF141414);
+
+    /// **不能只靠 `ColorScheme.fromSeed`**：seed 取纯中性灰（r=g=b）时，
+    /// HCT 的色相是未定义的，M3 会派生出一个**青色**的 primary
+    /// （实测为 `Color(0xFF006874)`）—— 界面上所有按钮与选中态集体变青。
+    /// 所以先拿 fromSeed 兜住未显式指定的派生槽位，再把 primary / secondary /
+    /// tertiary / surface / outline / error 全部按令牌显式覆盖。
     final scheme = ColorScheme.fromSeed(
       seedColor: seedColor,
       brightness: brightness,
+    ).copyWith(
+      primary: ink,
+      onPrimary: onInk,
+      primaryContainer: isLight
+          ? const Color(0xFFE8E8E6)
+          : const Color(0xFF2A2A2A),
+      onPrimaryContainer: AppInk.primary(isDark),
+      secondary: AppInk.secondary(isDark),
+      onSecondary: onInk,
+      secondaryContainer: isLight
+          ? const Color(0xFFECECEA)
+          : const Color(0xFF262626),
+      onSecondaryContainer: AppInk.primary(isDark),
+      // 第三色不再单独存在：界面里没有「第三种强调」的位置，跟着主色走，
+      // 免得有默认控件偷偷冒出 fromSeed 派生出来的青色。
+      tertiary: ink,
+      onTertiary: onInk,
+      tertiaryContainer: isLight
+          ? const Color(0xFFE8E8E6)
+          : const Color(0xFF2A2A2A),
+      onTertiaryContainer: AppInk.primary(isDark),
+      surface: AppInk.page(isDark),
+      onSurface: AppInk.primary(isDark),
+      surfaceContainerLow: AppInk.surface(isDark),
+      surfaceContainerHigh: isLight
+          ? const Color(0xFFF3F3F1)
+          : const Color(0xFF242424),
+      surfaceContainerHighest: isLight
+          ? const Color(0xFFECECEA)
+          : const Color(0xFF2C2C2C),
+      outline: AppInk.tertiary(isDark),
+      outlineVariant: AppInk.hairline(isDark),
+      // 警示：砖红（浅）/ 提亮一档（深），深色底上原色只有 2.9:1
+      error: isLight ? const Color(0xFF8A2F22) : const Color(0xFFE38B7B),
+      onError: isLight ? const Color(0xFFFAFAF8) : const Color(0xFF141414),
     );
 
     return ThemeData(
@@ -165,6 +222,13 @@ class AppTheme {
       ),
       floatingActionButtonTheme: const FloatingActionButtonThemeData(
         elevation: 3,
+      ),
+      // 规范 §1.2：强调色只用于进度。加载圈 / 进度条跟随主色会变成一片灰，
+      // 让人分不清「在加载」和「在播放」。
+      progressIndicatorTheme: ProgressIndicatorThemeData(
+        color: AppInk.accent(!isLight),
+        linearTrackColor: AppInk.hairline(!isLight),
+        refreshBackgroundColor: AppInk.page(!isLight),
       ),
       sliderTheme: const SliderThemeData(
         trackHeight: 4,
