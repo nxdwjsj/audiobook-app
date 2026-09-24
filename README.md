@@ -10,7 +10,7 @@
 一个 Flutter 有声书播放器（主用 Android 真机），核心能力是**直接播放网盘里的音频文件夹**，把网盘文件夹当作一本书来管理（目录、进度、续播、历史）。
 
 - 应用名：`audiobook_app`，显示名「聆云」
-- 版本：`1.1.2+22`（与 `pubspec.yaml` 一致）
+- 版本：`1.1.3+23`（与 `pubspec.yaml` 一致）
 - 平台目录：仅 `android/`（iOS 与 Web 平台目录已在 1.1.0 移除，不再维护）
 - **下载安装**：[Releases · 最新版](https://github.com/nxdwjsj/audiobook-app/releases/latest) → 下载对应的 APK 安装（release 构建、debug 签名、**仅 arm64**）
 - 仓库内副本：`releases/`（本地构建产物目录）

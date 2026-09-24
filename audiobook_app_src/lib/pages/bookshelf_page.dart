@@ -1,6 +1,3 @@
-import 'dart:io';
-
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import '../widgets/app_page_route.dart';
@@ -16,6 +13,7 @@ import '../services/book_source/online_book_hit.dart';
 import '../services/local_import_service.dart';
 import '../services/storage_service.dart';
 import '../theme/app_tokens.dart';
+import '../widgets/book_cover.dart';
 import '../widgets/frosted_glass.dart';
 import '../widgets/throttled_navigator.dart';
 import 'drive_browser_page.dart';
@@ -139,10 +137,12 @@ class _BookshelfPageState extends State<BookshelfPage> {
                       gridDelegate:
                           SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: _columns,
+                        // 两列时封面按规范走 3:4 竖版（书是竖的），
+                        // 加上下方两行文字约为宽度的 0.66 倍高。
                         childAspectRatio:
-                            _columns == 2 ? 0.72 : (_columns == 4 ? 0.5 : 0.53),
+                            _columns == 2 ? 0.66 : (_columns == 4 ? 0.5 : 0.53),
                         crossAxisSpacing: 14,
-                        mainAxisSpacing: 18,
+                        mainAxisSpacing: 20,
                       ),
                       itemCount: books.length,
                       itemBuilder: (context, index) {
@@ -327,28 +327,23 @@ class _BookshelfItemState extends State<_BookshelfItem> {
   BookshelfBook get book => widget.book;
 
   /// 封面：本地图 → 网络图 → 首字占位图
-  /// 解码尺寸统一限制在 300px（书架封面显示约 100-150px × dpr2-3），省内存
-  Widget _cover({double placeholderFontSize = 44}) {
-    if (book.localCoverPath != null) {
-      return Image.file(
-        File(book.localCoverPath!),
-        fit: BoxFit.cover,
-        cacheWidth: 300,
-        errorBuilder: (_, __, ___) =>
-            const _PlaceholderCover(title: ''),
-      );
-    }
-    if (book.coverUrl != null) {
-      return CachedNetworkImage(
-        imageUrl: book.coverUrl!,
-        fit: BoxFit.cover,
-        memCacheWidth: 300,
-        errorWidget: (context, url, error) =>
-            _PlaceholderCover(title: book.title),
-      );
-    }
-    return _PlaceholderCover(
-        title: book.title, fontSize: placeholderFontSize);
+  /// 统一走 [BookCover]（设计规范 §4）：自选图 → 网络图 → 生成封面，三级降级。
+  ///
+  /// 来源角标与底部进度条也由 BookCover 负责，页面不再自绘 ——
+  /// 原先页面里那层彩色角标（黑底 + 彩色图标）已按规范移除。
+  /// 解码尺寸统一限制在 300px（书架封面显示约 100-150dp × dpr2-3），省内存。
+  Widget _cover({
+    required ({IconData icon, String label, Color color}) badge,
+    double progress = 0,
+  }) {
+    return BookCover(
+      title: book.title,
+      author: book.author,
+      customImagePath: book.localCoverPath,
+      networkCoverUrl: book.coverUrl,
+      sourceLabel: badge.label,
+      progress: progress,
+    );
   }
 
   /// Badge describing where the book comes from.
@@ -487,35 +482,7 @@ class _BookshelfItemState extends State<_BookshelfItem> {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  _cover(),
-                  // Source badge
-                  Positioned(
-                    top: 6,
-                    left: 6,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 7, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.55),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(badge.icon, size: 11, color: badge.color),
-                          const SizedBox(width: 3),
-                          Text(
-                            badge.label,
-                            style: const TextStyle(
-                              fontSize: 10,
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+                  _cover(badge: badge, progress: progressPercent),
                   // 快速播放按钮：封面右下角
                   Positioned(
                     right: 6,
@@ -525,14 +492,8 @@ class _BookshelfItemState extends State<_BookshelfItem> {
                 ],
               ),
             ),
-            if (progressPercent > 0)
-              LinearProgressIndicator(
-                value: progressPercent,
-                minHeight: 3,
-                backgroundColor: Colors.transparent,
-              ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -540,21 +501,18 @@ class _BookshelfItemState extends State<_BookshelfItem> {
                     book.title,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 12.5,
-                          height: 1.25,
-                        ),
+                    style: AppType.body.copyWith(fontWeight: FontWeight.w500),
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    progressPercent > 0
-                        ? '已听 ${(progressPercent * 100).round()}%'
-                        : '${book.chapterCount} 集',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          fontSize: 10.5,
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
+                    progressPercent > 0 && progress != null
+                        ? '第 ${progress.chapterIndex + 1} 章 · 共 ${book.chapterCount} 章'
+                        : '共 ${book.chapterCount} 章',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppType.micro.copyWith(
+                      color: AppInk.secondary(Theme.of(context).brightness == Brightness.dark),
+                    ),
                   ),
                 ],
               ),
@@ -650,7 +608,7 @@ class _BookshelfItemState extends State<_BookshelfItem> {
                 child: SizedBox(
                   width: 48,
                   height: 64,
-                  child: _cover(placeholderFontSize: 22),
+                  child: _cover(badge: badge, progress: progressPercent),
                 ),
               ),
               const SizedBox(width: 12),
@@ -728,48 +686,6 @@ class _BookshelfItemState extends State<_BookshelfItem> {
 }
 
 /// 首字渐变占位封面（无封面时的默认显示）。
-class _PlaceholderCover extends StatelessWidget {
-  final String title;
-
-  /// 缩略图场景（列表视图封面）需要更小的字号
-  final double fontSize;
-
-  const _PlaceholderCover({required this.title, this.fontSize = 44});
-
-  @override
-  Widget build(BuildContext context) {
-    // 按书名哈希取色，同书恒定，多书之间有色差
-    final palette = [
-      [const Color(0xFF667eea), const Color(0xFF764ba2)],
-      [const Color(0xFFf093fb), const Color(0xFFf5576c)],
-      [const Color(0xFF4facfe), const Color(0xFF00f2fe)],
-      [const Color(0xFF43e97b), const Color(0xFF38f9d7)],
-      [const Color(0xFFfa709a), const Color(0xFFfee140)],
-      [const Color(0xFF30cfd0), const Color(0xFF330867)],
-      [const Color(0xFF5ee7df), const Color(0xFFb490ca)],
-      [const Color(0xFFff9a9e), const Color(0xFFfecfef)],
-    ];
-    final colors = palette[title.hashCode.abs() % palette.length];
-    final ch = title.trim().isEmpty ? '书' : title.trim().characters.first;
-
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: colors,
-        ),
-      ),
-      child: Center(
-        child: Text(
-          ch,
-          style: TextStyle(
-            fontSize: fontSize,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-          ),
-        ),
-      ),
-    );
-  }
-}
+// 旧的自绘占位封面（随机渐变 + 单个汉字 + title.hashCode 取色）已删除。
+// 统一由 widgets/book_cover.dart 的 BookCover 负责（设计规范 §4）：
+// 出版色板 + 竖排书名 + 稳定哈希，且自带角标与进度条。

@@ -98,3 +98,118 @@ class AppMotion {
   static Duration _scale(Duration d) =>
       lowPerformance ? Duration(milliseconds: (d.inMilliseconds * 0.45).round()) : d;
 }
+
+/// 字阶令牌（设计规范 §2）。
+///
+/// 全应用**只有 5 级字号、2 种字重**（400 / 500）。层级靠字号与颜色对比建立，
+/// 不靠加粗与描边 —— 这是「杂志感」的字面来源。
+/// 页面里不要再写裸 `TextStyle(fontSize: ...)`。
+class AppType {
+  const AppType._();
+
+  /// 页面主标题（「我的书架」）。
+  static const TextStyle display = TextStyle(
+    fontSize: 22,
+    fontWeight: FontWeight.w500,
+    height: 1.3,
+    letterSpacing: 0.2,
+  );
+
+  /// 书名、卡片标题。
+  static const TextStyle title = TextStyle(
+    fontSize: 17,
+    fontWeight: FontWeight.w500,
+    height: 1.35,
+    letterSpacing: 0.1,
+  );
+
+  /// 正文、章节名。
+  static const TextStyle body = TextStyle(
+    fontSize: 14,
+    fontWeight: FontWeight.w400,
+    height: 1.5,
+  );
+
+  /// 作者、来源、元信息。
+  static const TextStyle caption = TextStyle(
+    fontSize: 12,
+    fontWeight: FontWeight.w400,
+    height: 1.4,
+  );
+
+  /// 角标、标签。
+  static const TextStyle micro = TextStyle(
+    fontSize: 11,
+    fontWeight: FontWeight.w400,
+    height: 1.3,
+  );
+
+  /// 唯一允许的第二字重：用于强调标题。
+  static TextStyle emphasized(TextStyle base) =>
+      base.copyWith(fontWeight: FontWeight.w500);
+}
+
+/// 封面出版色板（设计规范 §1.3）。
+///
+/// 生成封面取这里的高饱和深色，而不是随机渐变 —— 渐变方块是「廉价感」的来源。
+/// 选色由书名哈希决定，**哈希自己实现**（FNV-1a）而不用 `String.hashCode`：
+/// 后者在不同 Dart 版本间不保证稳定，会导致升级 App 后同一本书换色。
+class AppCoverPalette {
+  const AppCoverPalette._();
+
+  /// 印刷品质感的低饱和深色，8 色。
+  static const List<Color> colors = <Color>[
+    Color(0xFF1F3D33), // 墨绿
+    Color(0xFF7A2E22), // 砖红
+    Color(0xFF1E2A4A), // 藏蓝
+    Color(0xFF8A5A2B), // 赭石
+    Color(0xFF4A2B45), // 绛紫
+    Color(0xFF6B4A32), // 铜褐
+    Color(0xFF34513F), // 松绿
+    Color(0xFF2E2E33), // 煤灰
+  ];
+
+  /// 封面上的文字色：米白（印刷纸色），比纯白更耐看。
+  static const Color ink = Color(0xFFF2EDE4);
+
+  /// 短横线 / 内框线。
+  static Color get rule => ink.withValues(alpha: 0.4);
+  static Color get frame => ink.withValues(alpha: 0.25);
+
+  /// 稳定哈希：FNV-1a 32 位，对同一输入永远返回同一值。
+  static int hashOf(String input) {
+    var hash = 0x811c9dc5;
+    for (final unit in input.codeUnits) {
+      hash ^= unit;
+      hash = (hash * 0x01000193) & 0xFFFFFFFF;
+    }
+    return hash;
+  }
+
+  /// 按书名取一个稳定的封面色。
+  static Color colorFor(String title) {
+    final key = title.trim().isEmpty ? '书' : title.trim();
+    return colors[hashOf(key) % colors.length];
+  }
+}
+
+/// 界面中性阶（设计规范 §1.1）。
+///
+/// 「杂志感」要求界面 95% 的面积由中性色占据；主色只在可交互与选中态出现。
+class AppInk {
+  const AppInk._();
+
+  static Color page(bool isDark) => isDark ? const Color(0xFF141414) : const Color(0xFFFAFAF8);
+  static Color surface(bool isDark) => isDark ? const Color(0xFF1E1E1E) : const Color(0xFFFFFFFF);
+  static Color primary(bool isDark) => isDark ? const Color(0xFFEDEDED) : const Color(0xFF1A1A1A);
+  static Color secondary(bool isDark) => isDark ? const Color(0xFFA0A0A0) : const Color(0xFF6B6B6B);
+  static Color tertiary(bool isDark) => isDark ? const Color(0xFF707070) : const Color(0xFF9E9E9E);
+  static Color hairline(bool isDark) => isDark ? const Color(0x1FFFFFFF) : const Color(0x1F000000);
+
+  /// 强调色：仅用于进度条与链接。
+  static const Color accent = Color(0xFF1F6F4A);
+
+  /// 墨色按钮底：选中态 / 主按钮用它，而不是彩色。
+  static Color solid(bool isDark) => primary(isDark);
+  static Color onSolid(bool isDark) => isDark ? const Color(0xFF141414) : const Color(0xFFFAFAF8);
+}

@@ -1,6 +1,3 @@
-import 'dart:io';
-
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import '../widgets/app_page_route.dart';
@@ -17,6 +14,7 @@ import '../services/audio_player_service.dart';
 import '../services/book_source/online_book_hit.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/book_cover.dart';
 import '../widgets/throttled_navigator.dart';
 import 'drive_browser_page.dart';
 import 'edit_book_info_page.dart';
@@ -416,28 +414,22 @@ class _ShelfBookDetailPageState extends State<ShelfBookDetailPage> {
     }
   }
 
+  /// 详情页封面统一走 [BookCover]（设计规范 §4、§5.1）。
+  ///
+  /// 此前这里是「有自选图就画、有网络图就画、都没有就画渐变占位」的三份分支，
+  /// 与书架页各写一套 —— 两处的降级行为、取色算法、圆角都不一致。
+  /// 现在全部收敛到 BookCover，封面观感在书架与详情之间保持连续。
   Widget _buildCover(BuildContext context) {
-    Widget? cover;
-    if (_book.localCoverPath != null) {
-      cover = Image.file(File(_book.localCoverPath!),
-          fit: BoxFit.cover,
-          cacheWidth: 600,
-          errorBuilder: (_, __, ___) => const SizedBox());
-    } else if (_book.coverUrl != null) {
-      // 详情页封面显示约 200px；用 CachedNetworkImage（磁盘缓存 + 限制解码尺寸）
-      cover = CachedNetworkImage(
-        imageUrl: _book.coverUrl!,
-        fit: BoxFit.cover,
+    return SizedBox(
+      width: 120,
+      height: 170,
+      child: BookCover(
+        title: _book.title,
+        author: _book.author,
+        customImagePath: _book.localCoverPath,
+        networkCoverUrl: _book.coverUrl,
         memCacheWidth: 600,
-        errorWidget: (_, __, ___) => const SizedBox(),
-      );
-    }
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: SizedBox(
-        width: 120,
-        height: 170,
-        child: cover ?? _PlaceholderCover(title: _book.title),
+        borderRadius: BorderRadius.circular(12),
       ),
     );
   }
@@ -777,46 +769,6 @@ class _ChapterFabState extends State<_ChapterFab> {
 }
 
 /// 首字渐变占位封面（无封面时的默认显示）。
-class _PlaceholderCover extends StatelessWidget {
-  final String title;
-
-  const _PlaceholderCover({required this.title});
-
-  @override
-  Widget build(BuildContext context) {
-    // 按书名哈希取色，同书恒定，多书之间有色差
-    final palette = [
-      [const Color(0xFF667eea), const Color(0xFF764ba2)],
-      [const Color(0xFFf093fb), const Color(0xFFf5576c)],
-      [const Color(0xFF4facfe), const Color(0xFF00f2fe)],
-      [const Color(0xFF43e97b), const Color(0xFF38f9d7)],
-      [const Color(0xFFfa709a), const Color(0xFFfee140)],
-      [const Color(0xFF30cfd0), const Color(0xFF330867)],
-      [const Color(0xFFa8edea), const Color(0xFFfed6e3)],
-      [const Color(0xFFff9a9e), const Color(0xFFfad0c4)],
-    ];
-    final colors =
-        palette[title.hashCode.abs() % palette.length];
-    final ch = title.trim().isEmpty ? '书' : title.trim().characters.first;
-
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: colors,
-        ),
-      ),
-      child: Center(
-        child: Text(
-          ch,
-          style: const TextStyle(
-            fontSize: 56,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-          ),
-        ),
-      ),
-    );
-  }
-}
+// 旧的自绘占位封面已删除：与书架页那份是同一种「随机渐变 + 单个汉字 +
+// title.hashCode 取色」实现，两处各写一遍且色板还不一样。
+// 现统一由 widgets/book_cover.dart 的 BookCover 负责（设计规范 §4）。
