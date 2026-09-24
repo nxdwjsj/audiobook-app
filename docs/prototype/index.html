@@ -145,10 +145,12 @@ h1{ font-size:22px; font-weight:500; margin:9px 0 0 0; line-height:1.3; letter-s
 .pbar i{ position:absolute; left:0; top:0; bottom:0; background:var(--ink); border-radius:2px }
 .pbar b{ position:absolute; top:50%; width:11px;height:11px;border-radius:50%;
   background:var(--ink); transform:translate(-50%,-50%) }
-.ctrls{ display:flex; align-items:center; justify-content:center; gap:26px; margin-top:20px }
+.ctrls{ display:flex; align-items:center; justify-content:center; gap:14px; margin-top:20px }
 .ru{ width:40px;height:40px;border-radius:50%;border:.5px solid var(--hair2,#DDD);
   display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--ink2);
   background:none;cursor:pointer;font-family:inherit }
+/* 切章按钮：视觉降一级，无描边（切章已由自动连播覆盖大部分场景） */
+.ru.ss{ border:0; font-size:15px }
 .big{ width:56px;height:56px;border-radius:50%;background:var(--ink);border:0;
   display:flex;align-items:center;justify-content:center;cursor:pointer }
 .chips{ display:flex; gap:8px; margin-top:22px }
@@ -285,9 +287,11 @@ h1{ font-size:22px; font-weight:500; margin:9px 0 0 0; line-height:1.3; letter-s
       <div class="pbar" id="p-bar"><i style="width:42%"></i><b style="left:42%"></b></div>
 
       <div class="ctrls">
-        <button class="ru">15</button>
+        <button class="ru ss" title="上一章">⏮</button>
+        <button class="ru" id="p-back" title="后退 15 秒">15</button>
         <button class="big" id="p-play"><span style="display:flex;gap:3px"><span style="width:4px;height:17px;background:#FAFAF8;border-radius:1px"></span><span style="width:4px;height:17px;background:#FAFAF8;border-radius:1px"></span></span></button>
-        <button class="ru">30</button>
+        <button class="ru" id="p-fwd" title="前进 30 秒">30</button>
+        <button class="ru ss" title="下一章">⏭</button>
       </div>
 
       <div class="chips">
@@ -459,6 +463,9 @@ function syncPlayer(){
 $('hero-play').onclick=()=>{playing=!playing;syncPlayer()};
 $('p-play').onclick=()=>{playing=!playing;syncPlayer()};
 $('mini-play').onclick=()=>{playing=!playing;syncPlayer()};
+/* ±秒跳转：与真机实现一致，目标位置夹在 [0,total] 之间 */
+$('p-back').onclick=()=>{ pos=Math.max(0,pos-15); syncPlayer(); };
+$('p-fwd').onclick =()=>{ pos=Math.min(total,pos+30); syncPlayer(); };
 setInterval(()=>{ if(playing){ pos=Math.min(total,pos+1); syncPlayer(); } },1000);
 
 // 顶部栏目

@@ -1,6 +1,3 @@
-import 'dart:io';
-
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
@@ -9,6 +6,7 @@ import 'drive_login_page.dart';
 import '../services/audio_player_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_page_route.dart';
+import '../widgets/book_cover.dart';
 import '../widgets/frosted_glass.dart';
 import '../theme/app_tokens.dart';
 import '../widgets/throttled_navigator.dart';
@@ -56,11 +54,6 @@ class PlayerPage extends StatelessWidget {
               tooltip: '跳过片头片尾',
               onPressed: () => _showSkipSheet(context, player),
             ),
-            IconButton(
-              icon: const Icon(Icons.list_rounded),
-              tooltip: '章节列表',
-              onPressed: player.hasBook ? () => _showChapters(context) : null,
-            ),
           ],
         ),
         // 顶栏透明 + 背景取渐变首色，body 用同色渐变衔接，视觉上是一整片
@@ -80,6 +73,19 @@ class PlayerPage extends StatelessWidget {
   Widget _buildPlayer(BuildContext context, AudioPlayerService player) {
     final book = player.currentBook!;
     final chapter = player.currentChapter;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    // 副标题：章节 + 演播署名合成一行（原型版式）。
+    // 「谁演播的」和「第几章」是同一层级的信息，分两行会白占一行高度。
+    final subParts = <String>[];
+    if (book.chapters.isNotEmpty) {
+      final t = chapter?.title.trim() ?? '';
+      final no = player.currentChapterIndex + 1;
+      subParts.add(t.isEmpty ? '第 $no 章' : '第 $no 章 · $t');
+    }
+    final au = book.author?.trim() ?? '';
+    if (au.isNotEmpty) subParts.add('$au 演播');
+    final subtitle = subParts.join('　');
 
     // LayoutBuilder + SingleChildScrollView avoids overflow on short screens
     // (e.g. when the error banner appears or in landscape).
@@ -90,39 +96,54 @@ class PlayerPage extends StatelessWidget {
             child: ConstrainedBox(
               constraints: BoxConstraints(minHeight: constraints.maxHeight),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                // 横向 20 而不是 24：主控件一行有 5 个按钮，固定宽度合计 242，
+                // 在最窄的常见机型（320dp）上留出余量，否则会溢出。
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
                 child: Column(
                   children: [
-                    // Cover
+                    // 封面：3:4 竖版（规范 §4）。全应用统一由 BookCover 渲染 ——
+                    // 播放页此前自绘了一份「本地图 / 网络图 / 图标占位」三分支，
+                    // 是继书架页与详情页之后第三份重复实现，一并收敛。
                     ConstrainedBox(
                       constraints: BoxConstraints(
-                        maxHeight: constraints.maxHeight * 0.42,
-                        maxWidth: constraints.maxHeight * 0.42,
+                        maxHeight: constraints.maxHeight * 0.40,
                       ),
-                      child: _buildCover(context, book.coverUrl),
+                      child: AspectRatio(
+                        aspectRatio: 3 / 4,
+                        child: BookCover(
+                          title: book.title,
+                          author: book.author,
+                          customImagePath: _localCoverPath(book.coverUrl),
+                          networkCoverUrl: _networkCoverUrl(book.coverUrl),
+                          borderRadius: BorderRadius.circular(12),
+                          memCacheWidth: 600,
+                        ),
+                      ),
                     ),
-                    const SizedBox(height: 24),
-                    // Title & author
+                    const SizedBox(height: 22),
+                    // 书名
                     Text(
                       book.title,
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w500,
-                          ),
+                      style: AppType.title.copyWith(color: AppInk.primary(isDark)),
                       textAlign: TextAlign.center,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      chapter?.title ?? '',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
-                      textAlign: TextAlign.center,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 20),
+                    if (subtitle.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: Text(
+                          subtitle,
+                          style: AppType.caption
+                              .copyWith(color: AppInk.secondary(isDark)),
+                          textAlign: TextAlign.center,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 18),
                     // 自动重试提示：失败后静默重试期间给用户一个反馈，
                     // 否则界面看起来像卡死（尤其校园网/CDN 域名解析抖动时）
                     if (player.retrying)
@@ -220,13 +241,16 @@ class PlayerPage extends StatelessWidget {
                           ),
                         ),
                       ),
-                    // Progress bar
+                    // 时间行：当前 / 本章还剩（强调色）/ 全长
+                    _buildTimesRow(context, player),
+                    const SizedBox(height: 6),
+                    // 进度条
                     _buildProgressBar(context, player),
-                    const SizedBox(height: 16),
-                    // Controls
+                    const SizedBox(height: 22),
+                    // 主控件
                     _buildControls(context, player),
-                    const SizedBox(height: 16),
-                    // Speed & sleep timer
+                    const SizedBox(height: 22),
+                    // 紧凑入口：倍速 / 定时 / 章节
                     _buildExtraControls(context, player),
                   ],
                 ),
@@ -238,134 +262,191 @@ class PlayerPage extends StatelessWidget {
     );
   }
 
-  Widget _buildCover(BuildContext context, String? coverUrl) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: scheme.shadow.withValues(alpha: 0.18),
-            blurRadius: 28,
-            offset: const Offset(0, 12),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: AspectRatio(
-          aspectRatio: 1,
-          child: _coverWidget(context, coverUrl),
-        ),
-      ),
-    );
-  }
+  /// 书籍的封面字段可能是「本地绝对路径」也可能是「网络 URL」，
+  /// BookCover 要求两者分开传，这里做一次判别。
+  static String? _localCoverPath(String? url) =>
+      (url != null && url.startsWith('/')) ? url : null;
 
-  /// 本地封面（编辑信息选的图）用 Image.file，网络封面用缓存图。
-  /// 封面显示约 220px，限制解码尺寸避免大图全尺寸解码浪费内存。
-  Widget _coverWidget(BuildContext context, String? coverUrl) {
-    if (coverUrl == null) return _coverPlaceholder(context);
-    if (coverUrl.startsWith('/')) {
-      return Image.file(File(coverUrl),
-          fit: BoxFit.cover,
-          cacheWidth: 600,
-          errorBuilder: (_, __, ___) => _coverPlaceholder(context));
+  static String? _networkCoverUrl(String? url) =>
+      (url != null && url.isNotEmpty && !url.startsWith('/')) ? url : null;
+
+  /// 时间行（原型版式）：当前时间在左，**「本章还剩」居中并以强调色标示**，
+  /// 全长在右。
+  ///
+  /// 「还剩多久」比「已播多久」有用得多 —— 听书的人靠它决定「这一章还能不能
+  /// 听完再睡」。此前页面上根本没有这个数字。
+  Widget _buildTimesRow(BuildContext context, AudioPlayerService player) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final position = player.position;
+    final duration = player.duration;
+
+    Duration? remaining;
+    if (duration != null && duration > position) {
+      remaining = duration - position;
     }
-    return CachedNetworkImage(
-      imageUrl: coverUrl,
-      fit: BoxFit.cover,
-      memCacheWidth: 600,
-      errorWidget: (context, url, error) => _coverPlaceholder(context),
+
+    final style = AppType.micro.copyWith(color: AppInk.tertiary(isDark));
+    return Row(
+      children: [
+        Text(_formatDuration(position), style: style),
+        Expanded(
+          child: Center(
+            child: Text(
+              remaining == null || remaining.inSeconds <= 0
+                  ? ''
+                  : '本章还剩 ${_formatDuration(remaining)}',
+              style: AppType.micro.copyWith(color: AppInk.accent(isDark)),
+            ),
+          ),
+        ),
+        Text(
+          duration == null ? '--:--' : _formatDuration(duration),
+          style: style,
+        ),
+      ],
     );
   }
 
-  Widget _coverPlaceholder(BuildContext context) {
-    return Container(
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      child: Icon(
-        Icons.book_rounded,
-        size: 100,
-        color: Theme.of(context).colorScheme.onSurfaceVariant,
-      ),
-    );
-  }
-
+  /// 细进度条（原型版式）：3px 轨道 + 11px 滑块，颜色走墨色而非主题紫。
+  ///
+  /// 时间文案不在这里 —— 上方 [_buildTimesRow] 已经显示，重复显示是噪音。
   Widget _buildProgressBar(BuildContext context, AudioPlayerService player) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final position = player.position;
     final duration = player.duration ?? Duration.zero;
     final value = duration.inMilliseconds > 0
         ? position.inMilliseconds / duration.inMilliseconds
         : 0.0;
 
-    return Column(
+    return SliderTheme(
+      data: SliderTheme.of(context).copyWith(
+        trackHeight: 3.0,
+        activeTrackColor: AppInk.primary(isDark),
+        inactiveTrackColor: AppInk.hairline(isDark),
+        thumbColor: AppInk.primary(isDark),
+        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5.5),
+        overlayShape: const RoundSliderOverlayShape(overlayRadius: 14.0),
+        trackShape: const RoundedRectSliderTrackShape(),
+      ),
+      child: Slider(
+        value: value.clamp(0.0, 1.0),
+        onChanged: duration.inMilliseconds > 0
+            ? (v) {
+                final newPos =
+                    Duration(milliseconds: (v * duration.inMilliseconds).toInt());
+                player.seek(newPos);
+              }
+            : null,
+      ),
+    );
+  }
+
+  /// 主控件（原型版式）：上一章 · 后退 15 秒 · 播放 · 前进 30 秒 · 下一章。
+  ///
+  /// 中间三个是高频动作；两侧的切章按钮保留但视觉上降一级 —— 切章已由
+  /// 自动连播覆盖大部分场景，而「倒回去 15 秒重听一句」是听书时最频繁的
+  /// 手动操作之一，此前根本没有入口（只能拖进度条）。
+  /// 中心按钮用墨色实心圆，不用主题色：杂志感要求色彩退后（规范 §1.2）。
+  Widget _buildControls(BuildContext context, AudioPlayerService player) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final canPrev = player.currentChapterIndex > 0;
+    final canNext = player.currentChapterIndex <
+        (player.currentBook?.chapters.length ?? 0) - 1;
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
-        // 使用SliderTheme优化滑块性能
-        SliderTheme(
-          data: SliderTheme.of(context).copyWith(
-            trackHeight: 4.0,
-            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8.0),
-            overlayShape: const RoundSliderOverlayShape(overlayRadius: 16.0),
-          ),
-          child: Slider(
-            value: value.clamp(0.0, 1.0),
-            onChanged: duration.inMilliseconds > 0
-                ? (v) {
-                    final newPos =
-                        Duration(milliseconds: (v * duration.inMilliseconds).toInt());
-                    player.seek(newPos);
-                  }
-                : null,
-          ),
+        IconButton(
+          icon: const Icon(Icons.skip_previous_rounded),
+          iconSize: 26,
+          color: AppInk.secondary(isDark),
+          tooltip: '上一章',
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+          onPressed: canPrev ? player.previousChapter : null,
         ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(_formatDuration(position)),
-              Text(_formatDuration(duration)),
-            ],
-          ),
+        _circleButton(
+          context,
+          label: '15',
+          tooltip: '后退 15 秒',
+          onTap: () => _skipBy(player, const Duration(seconds: -15)),
+        ),
+        _playButton(context, player),
+        _circleButton(
+          context,
+          label: '30',
+          tooltip: '前进 30 秒',
+          onTap: () => _skipBy(player, const Duration(seconds: 30)),
+        ),
+        IconButton(
+          icon: const Icon(Icons.skip_next_rounded),
+          iconSize: 26,
+          color: AppInk.secondary(isDark),
+          tooltip: '下一章',
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+          onPressed: canNext ? player.nextChapter : null,
         ),
       ],
     );
   }
 
-  Widget _buildControls(BuildContext context, AudioPlayerService player) {
-    final scheme = Theme.of(context).colorScheme;
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        GlassSurface(
-          borderRadius: 24,
-          child: IconButton(
-            icon: const Icon(Icons.skip_previous_rounded),
-            iconSize: 32,
-            color: scheme.primary,
-            tooltip: '上一章',
-            onPressed: player.previousChapter,
+  /// 相对跳转。目标位置由 [offsetPosition] 计算（夹在合法区间内）。
+  static void _skipBy(AudioPlayerService player, Duration delta) {
+    player.seek(offsetPosition(player.position, delta, player.duration));
+  }
+
+  /// 圆形数字按钮（后退 15 / 前进 30）。数字比图标更能直接传达幅度，
+  /// 幅度可任意调整时不必换图标。触控目标 46 ≥ 44dp 底线。
+  Widget _circleButton(
+    BuildContext context, {
+    required String label,
+    required String tooltip,
+    required VoidCallback onTap,
+  }) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: Container(
+          width: 46,
+          height: 46,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: AppInk.hairline(isDark), width: 0.5),
+          ),
+          child: Text(
+            label,
+            style: AppType.caption.copyWith(color: AppInk.secondary(isDark)),
           ),
         ),
-        const SizedBox(width: 24),
-        FloatingActionButton.large(
-          onPressed: player.playPause,
-          child: Icon(
-            player.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-            size: 48,
-          ),
+      ),
+    );
+  }
+
+  /// 播放 / 暂停：墨色实心圆（规范 §1.2）。
+  Widget _playButton(BuildContext context, AudioPlayerService player) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return InkWell(
+      customBorder: const CircleBorder(),
+      onTap: player.playPause,
+      child: Container(
+        width: 62,
+        height: 62,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: AppInk.primary(isDark),
         ),
-        const SizedBox(width: 24),
-        GlassSurface(
-          borderRadius: 24,
-          child: IconButton(
-            icon: const Icon(Icons.skip_next_rounded),
-            iconSize: 32,
-            color: scheme.primary,
-            tooltip: '下一章',
-            onPressed: player.nextChapter,
-          ),
+        child: Icon(
+          player.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+          size: 30,
+          color: AppInk.onSolid(isDark),
         ),
-      ],
+      ),
     );
   }
 
@@ -375,40 +456,52 @@ class PlayerPage extends StatelessWidget {
   /// 点开才是选项。保留三个入口：倍速 / 定时 / 章节（章节此前只能从别处进）。
   Widget _buildExtraControls(BuildContext context, AudioPlayerService player) {
     final total = player.currentBook?.chapters.length ?? 0;
+    // 三个入口等宽铺满（原型版式）：宽度一致让「倍速 / 定时 / 章节」读起来
+    // 是同一组并列选项，而不是三个各自独立的按钮。
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
-        _compactButton(
-          context,
-          icon: Icons.speed_rounded,
-          label: '${player.speed.toStringAsFixed(1)}x',
-          active: player.speed != 1.0,
-          onTap: () => _showSpeedDialog(context, player),
+        Expanded(
+          child: _compactButton(
+            context,
+            icon: Icons.speed_rounded,
+            label: '${player.speed.toStringAsFixed(1)}x',
+            active: player.speed != 1.0,
+            onTap: () => _showSpeedDialog(context, player),
+          ),
         ),
-        _compactButton(
-          context,
-          icon: player.hasSleepTimer
-              ? Icons.timer_rounded
-              : Icons.timer_outlined,
-          label: player.hasSleepTimer
-              ? _formatDuration(player.sleepRemaining ?? Duration.zero)
-              : '定时',
-          active: player.hasSleepTimer,
-          onTap: () => _showSleepTimerDialog(context, player),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _compactButton(
+            context,
+            icon: player.hasSleepTimer
+                ? Icons.timer_rounded
+                : Icons.timer_outlined,
+            label: player.hasSleepTimer
+                ? _formatDuration(player.sleepRemaining ?? Duration.zero)
+                : '定时',
+            active: player.hasSleepTimer,
+            onTap: () => _showSleepTimerDialog(context, player),
+          ),
         ),
-        _compactButton(
-          context,
-          icon: Icons.list_rounded,
-          label: total > 0
-              ? '${player.currentChapterIndex + 1}/$total'
-              : '章节',
-          onTap: () => _showChapters(context),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _compactButton(
+            context,
+            icon: Icons.list_rounded,
+            label: total > 0
+                ? '${player.currentChapterIndex + 1}/$total'
+                : '章节',
+            onTap: () => _showChapters(context),
+          ),
         ),
       ],
     );
   }
 
   /// 紧凑按钮：图标 + 文字，点开才是具体选项；[active] 时反白表示已生效。
+  ///
+  /// 由父级 [Expanded] 决定宽度，因此内容居中而不是靠 padding 撑开 ——
+  /// 三个入口等宽时文字长短不一，居中最稳。
   Widget _compactButton(
     BuildContext context, {
     required IconData icon,
@@ -421,8 +514,8 @@ class PlayerPage extends StatelessWidget {
       borderRadius: BorderRadius.circular(10),
       onTap: onTap,
       child: Container(
-        height: 32,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
+        height: 34,
+        alignment: Alignment.center,
         decoration: BoxDecoration(
           color: active ? AppInk.primary(isDark) : Colors.transparent,
           border: active
@@ -439,12 +532,16 @@ class PlayerPage extends StatelessWidget {
               color: active ? AppInk.onSolid(isDark) : AppInk.secondary(isDark),
             ),
             const SizedBox(width: 5),
-            Text(
-              label,
-              style: AppType.micro.copyWith(
-                color:
-                    active ? AppInk.onSolid(isDark) : AppInk.secondary(isDark),
-                fontWeight: active ? FontWeight.w500 : FontWeight.w400,
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppType.micro.copyWith(
+                  color:
+                      active ? AppInk.onSolid(isDark) : AppInk.secondary(isDark),
+                  fontWeight: active ? FontWeight.w500 : FontWeight.w400,
+                ),
               ),
             ),
           ],
@@ -702,6 +799,21 @@ class PlayerPage extends StatelessWidget {
     );
   }
 
+}
+
+/// 相对跳转的目标位置，夹在 `[0, duration]` 之间。
+///
+/// `AudioPlayerService.seek` 本身不做边界钳制 —— 把负数或超过时长的值直接
+/// 交给它，越界行为依平台而异。这里是纯函数，两条边界可以单测覆盖。
+Duration offsetPosition(
+  Duration position,
+  Duration delta,
+  Duration? duration,
+) {
+  var target = position + delta;
+  if (target < Duration.zero) target = Duration.zero;
+  if (duration != null && target > duration) target = duration;
+  return target;
 }
 
 String _formatDuration(Duration duration) {
