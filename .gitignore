@@ -1,3 +1,6 @@
 # 项目根目录临时/草稿文件，不进版本库
 *.log
 /quark_url.txt
+
+# 历史产包归档：APK 对外发布走 GitHub Releases，副本不要进版本库
+/releases/
