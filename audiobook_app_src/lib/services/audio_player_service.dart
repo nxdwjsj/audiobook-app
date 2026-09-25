@@ -1056,8 +1056,21 @@ class AudioPlayerService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// dispose 之后到达的 just_audio 流事件仍会回调已注册的监听器
+  /// （dispose 只取消了定时器，没有逐个取消流订阅），那些回调会调
+  /// [notifyListeners] 并抛「A AudioPlayerService was used after being disposed」。
+  /// 这里统一挡住：dispose 之后的任何通知直接丢弃。
+  bool _disposed = false;
+
+  @override
+  void notifyListeners() {
+    if (_disposed) return;
+    super.notifyListeners();
+  }
+
   @override
   void dispose() {
+    _disposed = true;
     _sleepTimer?.cancel();
     _progressSaveTimer?.cancel();
     _advanceRetryTimer?.cancel();

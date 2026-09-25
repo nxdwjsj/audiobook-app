@@ -30,13 +30,6 @@ void main() {
         ],
       );
 
-  /// 让 just_audio 的流事件先落地再 dispose。
-  /// 注意：AudioPlayerService.dispose() 取消了定时器但**没有取消流订阅**，
-  /// dispose 之后到达的事件会触发 `notifyListeners()` 并抛
-  /// 「was used after being disposed」——这里只做收尾缓冲，不在本测试范围内修。
-  Future<void> settleBeforeDispose() =>
-      Future<void>.delayed(const Duration(milliseconds: 200));
-
   test('retryCurrent：立刻重新解析一次，且仍失败时回到退避重试', () async {
     var calls = 0;
     final svc = AudioPlayerService(ProgressRepository(StorageService()));
@@ -65,7 +58,6 @@ void main() {
     expect(svc.retrying, isTrue,
         reason: '手动重试仍失败时要把退避重新挂上，不能让用户卡在「点了没反应」');
 
-    await settleBeforeDispose();
     svc.dispose();
   });
 
@@ -74,7 +66,6 @@ void main() {
     await svc.retryCurrent();
     expect(svc.lastError, isNull);
 
-    await settleBeforeDispose();
     svc.dispose();
   });
 }
