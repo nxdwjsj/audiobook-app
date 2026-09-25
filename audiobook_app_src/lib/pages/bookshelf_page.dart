@@ -378,9 +378,15 @@ class _BookshelfItemState extends State<_BookshelfItem> {
   }
 
   /// Badge describing where the book comes from.
-  ({IconData icon, String label, Color color}) _sourceBadge(BuildContext context) {
+  ///
+  /// 色值取自 [AppCoverPalette]（出版色板）而不是 Material 200 色板：
+  /// `Colors.teal / orange / blue / deepPurple` 是高饱和的 Material 原色，
+  /// 放在低饱和印刷色的封面旁边像贴了一张塑料标签 —— 廉价感的来源。
+  /// 出版色板里的这些深色在纸白卡片上是 7:1 以上，11px 小字也够读。
+  ({IconData icon, String label, Color color}) _sourceBadge(
+      BuildContext context) {
     if (book.isLocal) {
-      return (icon: Icons.download_rounded, label: '本地', color: Colors.teal);
+      return (icon: Icons.download_rounded, label: '本地', color: _source(0));
     }
     // 在线书源：id 是 online_{书源id}_{路径}，解析出书源名显示
     if (book.id.startsWith('online_')) {
@@ -389,27 +395,24 @@ class _BookshelfItemState extends State<_BookshelfItem> {
           book.id, repo.all.map((s) => s.id));
       final name =
           repo.all.where((s) => s.id == sourceId).firstOrNull?.name;
-      if (name != null && name.isNotEmpty) {
-        return (
-          icon: Icons.public_rounded,
-          label: name,
-          color: Colors.orange
-        );
-      }
       return (
         icon: Icons.public_rounded,
-        label: '在线',
-        color: Colors.orange
+        label: (name != null && name.isNotEmpty) ? name : '在线',
+        color: _source(3),
       );
     }
     switch (book.driveType) {
       case DriveType.baidu:
-        return (icon: Icons.cloud_rounded, label: '百度', color: Colors.blue);
+        return (
+          icon: Icons.cloud_rounded,
+          label: '百度',
+          color: _source(2),
+        );
       case DriveType.quark:
         return (
           icon: Icons.cloud_done_rounded,
           label: '夸克',
-          color: Colors.deepPurple
+          color: _source(4),
         );
       default:
         return (
@@ -419,6 +422,9 @@ class _BookshelfItemState extends State<_BookshelfItem> {
         );
     }
   }
+
+  /// 出版色板下标：0 墨绿 / 2 藏蓝 / 3 赭石 / 4 绛紫。
+  static Color _source(int i) => AppCoverPalette.colors[i];
 
   /// 封面上的快速播放按钮：点击直接续播，不进详情页。
   /// 无进度时从头播放。

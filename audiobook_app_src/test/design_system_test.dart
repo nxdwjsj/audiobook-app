@@ -330,4 +330,51 @@ void main() {
       );
     });
   });
+
+  group('色彩规范：页面里不得出现 Material 原色（规范 §1.1）', () {
+    test('lib/ 下除主题目录外，页面代码不得直接引用 Material 原色', () {
+      // 界面 95% 的面积必须是中性色 —— 这句话不写进 CI 就等于没说。
+      // 已发生过两次：书架来源角标用 `Colors.teal/orange/blue/deepPurple`、
+      // 网盘目录图标用 `Colors.amber`、登录页用 `Colors.green`，
+      // 每一处都是纸白/墨底上唯一的亮彩色块，把视线从封面上抢走。
+      // 允许白 / 黑 / transparent（毛玻璃高光、投影、"无底色"三处正当用法）。
+      final materialColors = RegExp(
+        r'Colors\.(?:red|pink|purple|deepPurple|indigo|blue|lightBlue|cyan'
+        r'|teal|green|lightGreen|lime|yellow|amber|orange|deepOrange|brown'
+        r'|blueGrey)\b',
+      );
+      final offenders = <String>[];
+      final root = Directory('lib');
+      expect(root.existsSync(), isTrue,
+          reason: '测试需在工程根目录运行（找不到 lib/）');
+      for (final entity in root.listSync(recursive: true)) {
+        if (entity is! File || !entity.path.endsWith('.dart')) continue;
+        // 色板与主题是本规范的源头，允许定义这些常量
+        final p = entity.path.replaceAll(r'\', '/');
+        if (p.startsWith('lib/theme/')) continue;
+        offenders.addAll(_offendingLines(entity, materialColors));
+      }
+      expect(
+        offenders,
+        isEmpty,
+        reason: '页面里不允许用 Material 200 色板的高饱和原色（色值请集中在 lib/theme/）：\n'
+            '${offenders.join('\n')}',
+      );
+    });
+  });
+}
+
+/// 返回文件中命中 [pattern] 的「行号 + 原文」，方便直接跳过去修。
+///
+/// 纯注释行不计入：写作时会引用被替换掉的旧实现（"此前这里是 Colors.green"），
+/// 注释不产生像素，把它算成违规只会逼人改写注释措辞。
+Iterable<String> _offendingLines(File file, Pattern pattern) sync* {
+  final lines = file.readAsStringSync().split('\n');
+  for (var i = 0; i < lines.length; i++) {
+    final trimmed = lines[i].trimLeft();
+    if (trimmed.startsWith('//') || trimmed.startsWith('*')) continue;
+    if (lines[i].contains(pattern)) {
+      yield '${file.path}:${i + 1} → ${lines[i].trim()}';
+    }
+  }
 }

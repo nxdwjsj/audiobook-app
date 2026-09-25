@@ -10,6 +10,7 @@ import '../services/cloud_drive_service.dart';
 import '../services/drive_list_cache.dart';
 import '../repositories/bookshelf_repository.dart';
 import '../models/bookshelf_book.dart';
+import '../theme/app_tokens.dart';
 import '../widgets/frosted_glass.dart';
 import '../widgets/throttled_navigator.dart';
 import 'drive_login_page.dart';
@@ -444,6 +445,8 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
     final currentAuth =
         _selectedDrive == DriveType.baidu ? baiduAuth : quarkAuth;
     final authed = currentAuth == AuthStatus.authenticated;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final audioCount = _visibleItems.where((i) => i.isAudio).length;
 
     return PopScope(
       // 逐级返回：非根目录时拦截返回键，先回上一级文件夹
@@ -476,23 +479,81 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
         children: [
           _buildDriveSelector(),
           if (authed) ...[
-            _buildShareCard(),
-            _buildBreadcrumb(),
+            _buildShareCard(isDark),
+            _buildBreadcrumb(isDark),
             _buildToolbar(),
           ],
           const Divider(height: 1),
-          Expanded(child: _buildFileList(currentAuth)),
+          Expanded(child: _buildFileList(currentAuth, isDark)),
         ],
       ),
-      floatingActionButton: authed && _items.isNotEmpty
-          ? FloatingActionButton(
-              onPressed: _playFolderAsBook,
-              tooltip: '播放此文件夹全部音频',
-              child: const Icon(Icons.play_arrow_rounded),
+      // 底部常驻动作条（取代原来的悬浮 FAB）：
+      // FAB 会盖住列表最后一行（于是列表得留 88px 空白），而「把整个文件夹
+      // 当一本书播」是这个页面最主要的操作，值得一个稳定的全宽位置。
+      bottomNavigationBar: authed && audioCount > 0
+          ? SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, AppSpacing.md),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: _playFolderAsBook,
+                        icon: const Icon(Icons.play_arrow_rounded, size: 20),
+                        label: Text('播放全部 $audioCount 集'),
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    OutlinedButton.icon(
+                      onPressed: _addCurrentFolderToShelf,
+                      icon: const Icon(Icons.add_rounded, size: 20),
+                      label: const Text('加入书架'),
+                    ),
+                  ],
+                ),
+              ),
             )
           : null,
       ),
     );
+  }
+
+  /// 把「当前文件夹」整本加入书架。
+  ///
+  /// 此前只有**长按文件夹**才有这个入口（底部条也没有），等于把高频动作藏进了
+  /// 长按菜单。现在与「播放全部」并列放在底部。
+  Future<void> _addCurrentFolderToShelf() async {
+    final audioFiles = _visibleItems.where((i) => i.isAudio).toList();
+    if (audioFiles.isEmpty) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final repository = context.read<BookshelfRepository>();
+    final book = _buildBookFromFolder(audioFiles);
+    final folderName = _currentPath.split('/').where((s) => s.isNotEmpty).lastOrNull;
+    setState(() => _loading = true);
+    try {
+      await repository.add(BookshelfBook(
+        id: book.id,
+        title: book.title,
+        author: book.author,
+        chapterCount: book.chapters.length,
+        driveType: _selectedDrive,
+        drivePath: _currentPath,
+        driveDirFid: _pathFid[_currentPath],
+        chapters: book.chapters,
+      ));
+      if (mounted) {
+        setState(() => _loading = false);
+        messenger.showSnackBar(
+          SnackBar(content: Text('「${folderName ?? book.title}」已加入书架（${book.chapters.length} 集）')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _loading = false);
+        messenger.showSnackBar(SnackBar(content: Text('加入书架失败：$e')));
+      }
+    }
   }
 
   /// 返回上一级文件夹（返回键逐级回退用）。
@@ -534,28 +595,32 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
     );
   }
 
-  Widget _buildShareCard() {
+  Widget _buildShareCard(bool isDark) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
       child: Card(
-        color: Theme.of(context).colorScheme.surfaceContainerLow,
+        color: AppInk.surface(isDark),
         child: InkWell(
+          borderRadius: BorderRadius.circular(AppRadius.lg),
           onTap: () =>
               setState(() => _shareCardExpanded = !_shareCardExpanded),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.md, vertical: 10),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
                     Icon(Icons.link_rounded,
-                        size: 18,
-                        color: Theme.of(context).colorScheme.primary),
-                    const SizedBox(width: 8),
+                        size: 18, color: AppInk.secondary(isDark)),
+                    const SizedBox(width: AppSpacing.sm),
                     Text(
                       '解析分享链接',
-                      style: Theme.of(context).textTheme.titleSmall,
+                      style: AppType.body.copyWith(
+                        fontWeight: FontWeight.w500,
+                        color: AppInk.primary(isDark),
+                      ),
                     ),
                     const Spacer(),
                     Icon(
@@ -610,12 +675,12 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
     );
   }
 
-  Widget _buildBreadcrumb() {
+  Widget _buildBreadcrumb(bool isDark) {
     return SizedBox(
       height: 40,
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
         itemCount: _crumbs.length,
         itemBuilder: (context, index) {
           final crumb = _crumbs[index];
@@ -624,8 +689,7 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
             children: [
               if (index > 0)
                 Icon(Icons.chevron_right_rounded,
-                    size: 18,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    size: 18, color: AppInk.tertiary(isDark)),
               TextButton(
                 onPressed: isLast ? null : () => _jumpToCrumb(index),
                 style: TextButton.styleFrom(
@@ -633,8 +697,8 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
                   minimumSize: const Size(0, 32),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   foregroundColor: isLast
-                      ? Theme.of(context).colorScheme.onSurface
-                      : Theme.of(context).colorScheme.primary,
+                      ? AppInk.primary(isDark)
+                      : AppInk.secondary(isDark),
                 ),
                 child: Text(
                   crumb.name,
@@ -690,23 +754,23 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
     );
   }
 
-  Widget _buildFileList(AuthStatus auth) {
+  Widget _buildFileList(AuthStatus auth, bool isDark) {
     if (auth != AuthStatus.authenticated) {
       return Center(
         child: Padding(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(AppSpacing.xxl),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(
                 Icons.cloud_off_rounded,
                 size: 64,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                color: AppInk.tertiary(isDark),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.lg),
               Text(
                 auth == AuthStatus.expired ? '登录已过期，请重新连接' : '请先连接网盘',
-                style: Theme.of(context).textTheme.titleMedium,
+                style: AppType.title.copyWith(color: AppInk.primary(isDark)),
               ),
               const SizedBox(height: 16),
               FilledButton.icon(
@@ -734,9 +798,13 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.error_outline, size: 64, color: Colors.red),
-              const SizedBox(height: 16),
-              Text('加载失败：$_error', textAlign: TextAlign.center),
+              Icon(Icons.error_outline, size: 64, color: AppInk.warning(isDark)),
+              const SizedBox(height: AppSpacing.lg),
+              Text(
+                '加载失败：$_error',
+                textAlign: TextAlign.center,
+                style: AppType.body.copyWith(color: AppInk.secondary(isDark)),
+              ),
               const SizedBox(height: 16),
               FilledButton.tonal(
                 onPressed: () => _loadFolder(forceRefresh: true),
@@ -759,9 +827,8 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
               child: Center(
                 child: Text(
                   _filter.isNotEmpty ? '没有匹配的文件' : '此文件夹为空',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
+                  style:
+                      AppType.body.copyWith(color: AppInk.tertiary(isDark)),
                 ),
               ),
             ),
@@ -771,54 +838,72 @@ class _DriveBrowserPageState extends State<DriveBrowserPage> {
     }
 
     return RefreshIndicator(
-      onRefresh: () => _loadFolder(),
+      onRefresh: () => _loadFolder(forceRefresh: true),
       child: ListView.separated(
-        padding: const EdgeInsets.only(bottom: 88),
+        // 底部留白只给底栏留高度（原来是给 FAB 留的 88px）
+        padding: const EdgeInsets.only(bottom: AppSpacing.lg),
         itemCount: items.length,
         separatorBuilder: (_, __) => const Divider(height: 1, indent: 72),
         itemBuilder: (context, index) {
           final item = items[index];
-          return _buildListTile(item);
+          return _buildListTile(item, isDark);
         },
       ),
     );
   }
 
-  Widget _buildListTile(DriveItem item) {
-    final scheme = Theme.of(context).colorScheme;
+  Widget _buildListTile(DriveItem item, bool isDark) {
     final isAudio = item.isAudio;
     final isDir = item.isDir;
+    // 三类条目的底色/图标色：文件夹 = 墨色系，音频 = 强调色（可播的就是重点），
+    // 其它文件 = 中性。此前音频用硬编码 `Colors.green`，与强调色令牌不是一个绿。
+    final Color tileBg;
+    final Color iconColor;
+    final IconData icon;
+    if (isDir) {
+      tileBg = AppInk.primary(isDark).withValues(alpha: 0.08);
+      iconColor = AppInk.primary(isDark);
+      icon = Icons.folder_rounded;
+    } else if (isAudio) {
+      tileBg = AppInk.accent(isDark).withValues(alpha: 0.12);
+      iconColor = AppInk.accent(isDark);
+      icon = Icons.audio_file_rounded;
+    } else {
+      tileBg = AppInk.hairline(isDark);
+      iconColor = AppInk.tertiary(isDark);
+      icon = Icons.insert_drive_file_rounded;
+    }
 
     return ListTile(
       leading: Container(
         width: 44,
         height: 44,
         decoration: BoxDecoration(
-          color: isDir
-              ? scheme.primaryContainer
-              : (isAudio ? Colors.green.withValues(alpha: 0.15) : scheme.surfaceContainerHighest),
-          borderRadius: BorderRadius.circular(12),
+          color: tileBg,
+          borderRadius: BorderRadius.circular(AppRadius.md),
         ),
-        child: Icon(
-          isDir
-              ? Icons.folder_rounded
-              : (isAudio
-                  ? Icons.audio_file_rounded
-                  : Icons.insert_drive_file_rounded),
-          color: isDir
-              ? scheme.onPrimaryContainer
-              : (isAudio ? Colors.green.shade700 : scheme.onSurfaceVariant),
-        ),
+        child: Icon(icon, color: iconColor),
       ),
       title: Text(
         item.name,
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontWeight: FontWeight.w500),
+        style: AppType.body.copyWith(
+          fontWeight: FontWeight.w500,
+          color: AppInk.primary(isDark),
+        ),
       ),
       subtitle: isDir
-          ? (item.fileCount > 0 ? Text('${item.fileCount} 个文件') : null)
-          : Text(_formatSize(item.size)),
+          ? (item.fileCount > 0
+              ? Text(
+                  '${item.fileCount} 个文件',
+                  style: AppType.micro.copyWith(color: AppInk.tertiary(isDark)),
+                )
+              : null)
+          : Text(
+              _formatSize(item.size),
+              style: AppType.micro.copyWith(color: AppInk.tertiary(isDark)),
+            ),
       trailing: isAudio
           ? IconButton.filledTonal(
               icon: const Icon(Icons.play_arrow_rounded, size: 20),

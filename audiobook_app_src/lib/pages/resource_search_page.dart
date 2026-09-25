@@ -14,6 +14,8 @@ import '../services/cloud_drive_service.dart';
 import '../services/quark_drive_service.dart';
 import '../services/resource_search_service.dart';
 import '../services/storage_service.dart';
+import '../theme/app_tokens.dart';
+import '../widgets/book_cover.dart';
 import '../widgets/frosted_glass.dart';
 import '../widgets/throttled_navigator.dart';
 import 'book_source_page.dart';
@@ -343,11 +345,65 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('搜索'),
+        // 搜索框直接在标题位：AppBar 再来一遍「搜索」二字是重复噪声，
+        // 也白白吃掉一整行高度（原来标题 + 输入框 + 按钮要占两行）。
+        toolbarHeight: 60,
+        titleSpacing: 0,
+        title: Padding(
+          padding: const EdgeInsets.only(left: 4),
+          child: TextField(
+            controller: _keyword,
+            textInputAction: TextInputAction.search,
+            onSubmitted: (_) => _search(),
+            // 带边框的输入框在顶栏里是两层框套框：这里要的是"输入即搜索"的直感
+            decoration: InputDecoration(
+              hintText: '书名 / 关键词',
+              hintStyle: AppType.body.copyWith(color: AppInk.tertiary(isDark)),
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              filled: false,
+              isDense: true,
+              prefixIcon: Icon(Icons.search_rounded,
+                  size: 20, color: AppInk.tertiary(isDark)),
+              prefixIconConstraints:
+                  const BoxConstraints.tightFor(width: 32),
+            ),
+            style: AppType.title.copyWith(color: AppInk.primary(isDark)),
+          ),
+        ),
         actions: [
-          // 书源管理入口：显示当前启用数
+          // 搜索态用按钮位置的转圈表达忙碌，别让用户以为卡住了
+          if (_searching)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  // 跟随主色会变成一片灰，看不出"正在加载"
+                  color: AppInk.accent(isDark),
+                ),
+              ),
+            )
+          else ...[
+            if (_keyword.text.isNotEmpty)
+              IconButton(
+                icon: const Icon(Icons.close_rounded),
+                tooltip: '清空',
+                onPressed: () => setState(_keyword.clear),
+              ),
+            IconButton(
+              icon: const Icon(Icons.search_rounded),
+              tooltip: '搜索',
+              onPressed: _search,
+            ),
+          ],
+          // 书源管理入口
           IconButton(
             icon: const Icon(Icons.travel_explore_rounded),
             tooltip: '书源管理',
@@ -359,39 +415,10 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
       ),
       body: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _keyword,
-                    textInputAction: TextInputAction.search,
-                    onSubmitted: (_) => _search(),
-                    decoration: const InputDecoration(
-                      hintText: '书名 / 关键词，如 神秘复苏',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                FilledButton(
-                  onPressed: _searching ? null : _search,
-                  child: _searching
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('搜索'),
-                ),
-              ],
-            ),
-          ),
           // 搜索范围：本地（含我的网盘）/ 网盘分享 / 在线，搜索前可自由勾选
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 2),
+            padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.sm,
+                AppSpacing.lg, AppSpacing.xs),
             child: Row(
               children: [
                 _scopeChip(_Scope.local, '本地', Icons.folder_special_rounded),
@@ -404,43 +431,46 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
           if (_scopes.contains(_Scope.share))
             Padding(
               padding: const EdgeInsets.fromLTRB(18, 0, 18, 4),
-              child: InkWell(
-                onTap: _shelvingKey != null ? null : _pickSaveDir,
-                borderRadius: BorderRadius.circular(8),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Row(
-                    children: [
-                      Icon(Icons.drive_file_move_outline,
-                          size: 16,
-                          color: Theme.of(context).colorScheme.primary),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          '保存到：$_saveDirName',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
+              child:                   InkWell(
+                    onTap: _shelvingKey != null ? null : _pickSaveDir,
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+                      child: Row(
+                        children: [
+                          Icon(Icons.drive_file_move_outline,
+                              size: 16,
+                              color: AppInk.secondary(isDark)),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              '保存到：$_saveDirName',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: AppType.caption
+                                  .copyWith(color: AppInk.secondary(isDark)),
+                            ),
+                          ),
+                          Text(
+                            '更换',
+                            style: AppType.caption
+                                .copyWith(color: AppInk.primary(isDark)),
+                          ),
+                        ],
                       ),
-                      Text(
-                        '更换',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Theme.of(context).colorScheme.primary),
-                      ),
-                    ],
+                    ),
                   ),
-                ),
-              ),
             ),
           if (_progress != null)
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
                   _progress!,
-                  style: Theme.of(context).textTheme.bodySmall,
+                  style: AppType.caption.copyWith(
+                    color: AppInk.tertiary(isDark),
+                  ),
                 ),
               ),
             ),
@@ -453,13 +483,17 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
   /// 搜索范围勾选 chip：三个等宽排一行，选中/未选中一眼可辨。
   Widget _scopeChip(_Scope scope, String label, IconData icon) {
     final selected = _scopes.contains(scope);
-    final scheme = Theme.of(context).colorScheme;
-    final fg = selected ? scheme.primary : scheme.onSurfaceVariant;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    // 选中 = 墨色实底。原文的「12% 主色底 + 55% 主色描边」在三个并排 chip 上
+    // 是六条边框，纸白底最显脏的一块；主色换成墨后也不再需要描边去强调。
+    final fg = selected
+        ? AppInk.onSolid(isDark)
+        : AppInk.secondary(isDark);
     return Expanded(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4),
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs),
         child: InkWell(
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(AppRadius.pill),
           onTap: _searching
               ? null
               : () => setState(() {
@@ -470,30 +504,28 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
                     }
                   }),
           child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
+            padding: const EdgeInsets.symmetric(
+                vertical: AppSpacing.sm, horizontal: 6),
             decoration: BoxDecoration(
-              color: selected
-                  ? scheme.primary.withValues(alpha: 0.12)
-                  : scheme.onSurface.withValues(alpha: 0.05),
-              borderRadius: BorderRadius.circular(20),
+              color: selected ? AppInk.solid(isDark) : Colors.transparent,
+              borderRadius: BorderRadius.circular(AppRadius.pill),
               border: Border.all(
                 color: selected
-                    ? scheme.primary.withValues(alpha: 0.55)
-                    : Colors.transparent,
+                    ? AppInk.solid(isDark)
+                    : AppInk.hairline(isDark),
               ),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Icon(icon, size: 15, color: fg),
-                const SizedBox(width: 4),
+                const SizedBox(width: AppSpacing.xs),
                 Flexible(
                   child: Text(
                     label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 13,
+                    style: AppType.caption.copyWith(
                       color: fg,
                       fontWeight:
                           selected ? FontWeight.w500 : FontWeight.normal,
@@ -516,23 +548,41 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
         _shareResults.isEmpty &&
         _onlineHits.isEmpty;
     if (noResult && _searching) {
-      return const Center(child: CircularProgressIndicator());
+      return Center(
+        child: CircularProgressIndicator(
+          color: AppInk.accent(Theme.of(context).brightness == Brightness.dark),
+        ),
+      );
     }
     if (noResult) {
-      return const Center(
+      final isDark = Theme.of(context).brightness == Brightness.dark;
+      return Center(
         child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: 32),
-          child: Text(
-            '一个入口搜全部\n'
-            '本地（书架 + 我的网盘）/ 网盘分享 / 在线听书\n'
-            '结果按来源分开显示，不会混在一起',
-            textAlign: TextAlign.center,
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xxxl),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.travel_explore_rounded,
+                  size: 40, color: AppInk.tertiary(isDark)),
+              const SizedBox(height: AppSpacing.lg),
+              Text(
+                '一个入口搜全部',
+                style: AppType.title.copyWith(color: AppInk.primary(isDark)),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                '本地（书架 + 我的网盘）/ 网盘分享 / 在线听书\n'
+                '结果按来源分开显示，不会混在一起',
+                textAlign: TextAlign.center,
+                style: AppType.body.copyWith(color: AppInk.tertiary(isDark)),
+              ),
+            ],
           ),
         ),
       );
     }
     return ListView(
-      padding: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.only(bottom: AppSpacing.xxl),
       children: [
         // ---- 本地：书架 ----
         if (_scopes.contains(_Scope.local)) ...[
@@ -605,7 +655,7 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
     int count, {
     bool loading = false,
   }) {
-    final scheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final collapsed = _collapsed.contains(key);
     return InkWell(
       onTap: () => setState(() {
@@ -616,32 +666,32 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
         }
       }),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 12, 4),
+        padding: const EdgeInsets.fromLTRB(
+            AppSpacing.lg, AppSpacing.lg, AppSpacing.md, AppSpacing.xs),
         child: Row(
           children: [
-            Icon(icon, size: 18, color: scheme.primary),
+            Icon(icon, size: 18, color: AppInk.secondary(isDark)),
             const SizedBox(width: 6),
             Text(
               label,
-              style: Theme.of(context)
-                  .textTheme
-                  .titleSmall
-                  ?.copyWith(fontWeight: FontWeight.w500),
+              style: AppType.title.copyWith(color: AppInk.primary(isDark)),
             ),
             const SizedBox(width: 6),
             if (loading)
-              const SizedBox(
+              SizedBox(
                 width: 12,
                 height: 12,
-                child: CircularProgressIndicator(strokeWidth: 2),
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: AppInk.accent(isDark),
+                ),
               )
             else
               Text(
                 '$count',
-                style: Theme.of(context)
-                    .textTheme
-                    .bodySmall
-                    ?.copyWith(color: scheme.onSurfaceVariant),
+                style: AppType.caption.copyWith(
+                  color: AppInk.tertiary(isDark),
+                ),
               ),
             const Spacer(),
             Icon(
@@ -649,7 +699,7 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
                   ? Icons.expand_more_rounded
                   : Icons.expand_less_rounded,
               size: 20,
-              color: scheme.onSurfaceVariant,
+              color: AppInk.tertiary(isDark),
             ),
           ],
         ),
@@ -658,13 +708,13 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
   }
 
   Widget _emptyHint(String text) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.xl, vertical: AppSpacing.sm),
       child: Text(
         text,
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
+        style: AppType.caption.copyWith(color: AppInk.tertiary(isDark)),
       ),
     );
   }
@@ -702,7 +752,7 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
 
   /// 书源级小标题（比一级分区标题轻一号，同样点击收起/展开）。
   Widget _subHeader(String key, String label, int count, bool collapsed) {
-    final scheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return InkWell(
       onTap: () => setState(() {
         if (collapsed) {
@@ -715,27 +765,28 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
         padding: const EdgeInsets.fromLTRB(22, 10, 16, 2),
         child: Row(
           children: [
+            // 3px 竖条：比一级分区标题再轻一号，保持同一语法。
+            // 原文半透明主色在墨色体系里等于浅灰，看不出是"分节"。
             Container(
               width: 3,
               height: 13,
               decoration: BoxDecoration(
-                color: scheme.primary.withValues(alpha: 0.6),
+                color: AppInk.secondary(isDark),
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
             const SizedBox(width: 8),
             Text(
               label,
-              style: TextStyle(
-                fontSize: 13,
+              style: AppType.caption.copyWith(
+                color: AppInk.secondary(isDark),
                 fontWeight: FontWeight.w500,
-                color: scheme.onSurfaceVariant,
               ),
             ),
             const SizedBox(width: 6),
             Text(
               '$count',
-              style: TextStyle(fontSize: 12, color: scheme.outline),
+              style: AppType.micro.copyWith(color: AppInk.tertiary(isDark)),
             ),
             const Spacer(),
             Icon(
@@ -743,7 +794,7 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
                   ? Icons.keyboard_arrow_down_rounded
                   : Icons.keyboard_arrow_up_rounded,
               size: 18,
-              color: scheme.outline,
+              color: AppInk.tertiary(isDark),
             ),
           ],
         ),
@@ -752,10 +803,34 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
   }
 
   Widget _buildShelfTile(BookshelfBook b) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return ListTile(
-      leading: const Icon(Icons.menu_book_rounded),
-      title: Text(b.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text('${b.chapterCount} 集'),
+      contentPadding:
+          const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: 2),
+      // 书架结果本来就有封面（自选图 / 网盘图 / 生成图三级降级），
+      // 用一个书本图标顶替等于把已经做好的视觉识别又抹掉了。
+      leading: SizedBox(
+        width: 36,
+        height: 48,
+        child: BookCover(
+          title: b.title,
+          author: b.author,
+          customImagePath: b.localCoverPath,
+          networkCoverUrl: b.coverUrl,
+          memCacheWidth: 160,
+          elevated: false,
+        ),
+      ),
+      title: Text(
+        b.title,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: AppType.title.copyWith(color: AppInk.primary(isDark)),
+      ),
+      subtitle: Text(
+        '${b.chapterCount} 集',
+        style: AppType.caption.copyWith(color: AppInk.tertiary(isDark)),
+      ),
       onTap: () => context.pushThrottled(AppPageRoute(
         builder: (_) => ShelfBookDetailPage(book: b),
       )),
@@ -763,13 +838,28 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
   }
 
   Widget _buildDriveTile(DriveItem item) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return ListTile(
+      contentPadding:
+          const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: 2),
+      // 文件夹的琥珀色是 Material 的老约定，在墨色体系里是唯一一处亮彩色；
+      // 目录 / 文件的区分已经由图标形状承担，颜色只需区分「主信息 / 次信息」。
       leading: Icon(
         item.isDir ? Icons.folder_rounded : Icons.audio_file_rounded,
-        color: item.isDir ? Colors.amber.shade700 : null,
+        color: AppInk.secondary(isDark),
       ),
-      title: Text(item.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text(item.path, maxLines: 1, overflow: TextOverflow.ellipsis),
+      title: Text(
+        item.name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: AppType.body.copyWith(color: AppInk.primary(isDark)),
+      ),
+      subtitle: Text(
+        item.path,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: AppType.caption.copyWith(color: AppInk.tertiary(isDark)),
+      ),
       onTap: () => _openDriveItem(item),
     );
   }
@@ -882,7 +972,7 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
   }
 
   Widget _buildOnlineCard(OnlineBookHit h) {
-    final theme = Theme.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final inShelf =
         context.read<BookshelfRepository>().isInShelf(_onlineBookIdFor(h));
     final sourceName = context
@@ -893,31 +983,39 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
             ?.name ??
         h.source;
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      margin: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md, vertical: 6),
       child: ListTile(
         leading: Icon(Icons.headphones_rounded,
-            color: theme.colorScheme.primary),
+            color: AppInk.secondary(isDark)),
         title: Text(
           h.title,
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontWeight: FontWeight.w500),
+          style: AppType.body.copyWith(
+            color: AppInk.primary(isDark),
+            fontWeight: FontWeight.w500,
+          ),
         ),
         subtitle: Text(
           '$sourceName · 在线收听${h.author != null && h.author!.isNotEmpty ? ' · ${h.author}' : ''}',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
+          style: AppType.caption.copyWith(color: AppInk.tertiary(isDark)),
         ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             if (_shelvingKey == _onlineBookIdFor(h))
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 14),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
                 child: SizedBox(
                   width: 20,
                   height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2.5),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.5,
+                    color: AppInk.accent(isDark),
+                  ),
                 ),
               )
             else ...[
@@ -943,27 +1041,38 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
   }
 
   Widget _buildCard(ResourceResult r) {
-    final theme = Theme.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final inShelf =
         context.read<BookshelfRepository>().isInShelf(_bookIdFor(r));
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      margin: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md, vertical: 6),
       child: ListTile(
         title: Text(
           r.title,
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontWeight: FontWeight.w500),
+          style: AppType.body.copyWith(
+            color: AppInk.primary(isDark),
+            fontWeight: FontWeight.w500,
+          ),
         ),
         subtitle: r.error != null
-            ? Text(r.error!,
+            ? Text(
+                r.error!,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: theme.colorScheme.error))
+                style: AppType.caption.copyWith(color: AppInk.warning(isDark)),
+              )
             : Text(
                 '${_sourceLabel(r.source)} · ${r.audioItems.length} 集 · '
                 '${_fmtSize(r.audioBytes)}'
                 '${r.keywordHits > 0 ? ' · 命中关键词' : ''}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppType.caption.copyWith(
+                  color: AppInk.tertiary(isDark),
+                ),
               ),
         trailing: r.error != null
             ? null
@@ -972,12 +1081,15 @@ class _ResourceSearchPageState extends State<ResourceSearchPage> {
                 children: [
                   if (_shelvingKey == _bookIdFor(r))
                     // 正在转存这一本：给个明确的忙碌反馈，顺便锁住按钮
-                    const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 14),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
                       child: SizedBox(
                         width: 20,
                         height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2.5),
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          color: AppInk.accent(isDark),
+                        ),
                       ),
                     )
                   else ...[
@@ -1103,7 +1215,7 @@ class _SaveDirPickerState extends State<_SaveDirPicker> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final fid = _stack.isEmpty ? '0' : _stack.last.$1;
     return SafeArea(
       child: SizedBox(
@@ -1111,12 +1223,16 @@ class _SaveDirPickerState extends State<_SaveDirPicker> {
         child: Column(
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
+              padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg, AppSpacing.md, AppSpacing.sm, 0),
               child: Row(
                 children: [
                   Expanded(
-                    child:
-                        Text('选择保存位置', style: theme.textTheme.titleMedium),
+                    child: Text(
+                      '选择保存位置',
+                      style: AppType.title
+                          .copyWith(color: AppInk.primary(isDark)),
+                    ),
                   ),
                   IconButton(
                     icon: const Icon(Icons.close_rounded),
@@ -1126,7 +1242,7 @@ class _SaveDirPickerState extends State<_SaveDirPicker> {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
               child: Row(
                 children: [
                   if (_stack.isNotEmpty)
@@ -1140,14 +1256,15 @@ class _SaveDirPickerState extends State<_SaveDirPicker> {
                       _pathLabel,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall,
+                      style: AppType.caption
+                          .copyWith(color: AppInk.tertiary(isDark)),
                     ),
                   ),
                 ],
               ),
             ),
-            const Divider(height: 8),
-            Expanded(child: _buildList(theme)),
+            const Divider(height: AppSpacing.sm),
+            Expanded(child: _buildList()),
             const Divider(height: 1),
             Padding(
               padding: const EdgeInsets.all(12),
@@ -1181,31 +1298,47 @@ class _SaveDirPickerState extends State<_SaveDirPicker> {
     );
   }
 
-  Widget _buildList(ThemeData theme) {
-    if (_loading) return const Center(child: CircularProgressIndicator());
+  Widget _buildList() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    if (_loading) {
+      return Center(
+          child: CircularProgressIndicator(color: AppInk.accent(isDark)));
+    }
     if (_error != null) {
       return Center(
         child: Padding(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(AppSpacing.xl),
           child: Text(
             '读取目录失败：$_error',
             textAlign: TextAlign.center,
-            style: TextStyle(color: theme.colorScheme.error),
+            style: AppType.body.copyWith(color: AppInk.warning(isDark)),
           ),
         ),
       );
     }
     if (_dirs.isEmpty) {
-      return const Center(child: Text('这个文件夹里没有子文件夹'));
+      return Center(
+        child: Text(
+          '这个文件夹里没有子文件夹',
+          style: AppType.body.copyWith(color: AppInk.tertiary(isDark)),
+        ),
+      );
     }
     return ListView.builder(
       itemCount: _dirs.length,
       itemBuilder: (context, i) {
         final d = _dirs[i];
         return ListTile(
-          leading: const Icon(Icons.folder_rounded),
-          title: Text(d.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-          trailing: const Icon(Icons.chevron_right_rounded),
+          leading: Icon(Icons.folder_rounded,
+              color: AppInk.secondary(isDark)),
+          title: Text(
+            d.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppType.body.copyWith(color: AppInk.primary(isDark)),
+          ),
+          trailing: Icon(Icons.chevron_right_rounded,
+              color: AppInk.tertiary(isDark)),
           onTap: () => _enter(d),
         );
       },

@@ -225,6 +225,14 @@ class AppInk {
   static Color hairline(bool isDark) =>
       isDark ? const Color(0x1FFFFFFF) : const Color(0x1F000000);
 
+  /// 警示：仅用于登录失效、加载失败这类**需要用户做点什么**的提示。
+  ///
+  /// 规范 §1.2 里的砖红 `#8A2F22` 此前只写在文档里、代码里没有对应令牌，
+  /// 于是各处要么硬编码 `Colors.red`、要么拿强调色顶替（绿图标配「加载失败」）。
+  /// 深色模式必须提亮：砖红在墨底上只有 **2.9:1**。
+  static Color warning(bool isDark) =>
+      isDark ? const Color(0xFFE38B7B) : const Color(0xFF8A2F22);
+
   /// 强调色：仅用于进度条与「继续收听」这类需要被注意的标签。
   ///
   /// **必须按明暗取值**：同一个 `#1F6F4A` 在浅色底上是 5.86:1（达标），

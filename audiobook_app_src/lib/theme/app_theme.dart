@@ -89,8 +89,8 @@ class AppTheme {
           : const Color(0xFF2C2C2C),
       outline: AppInk.tertiary(isDark),
       outlineVariant: AppInk.hairline(isDark),
-      // 警示：砖红（浅）/ 提亮一档（深），深色底上原色只有 2.9:1
-      error: isLight ? const Color(0xFF8A2F22) : const Color(0xFFE38B7B),
+      // 警示（AppInk.warning）：深色底上砖红只有 2.9:1，必须提亮一档
+      error: AppInk.warning(isDark),
       onError: isLight ? const Color(0xFFFAFAF8) : const Color(0xFF141414),
     );
 

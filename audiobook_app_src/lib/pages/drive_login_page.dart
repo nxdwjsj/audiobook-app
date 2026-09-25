@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../services/baidu_drive_service.dart';
 import '../services/cloud_drive_service.dart';
 import '../services/quark_drive_service.dart';
+import '../theme/app_tokens.dart';
 import '../widgets/throttled_navigator.dart';
 import 'quark_web_login_page.dart';
 
@@ -161,7 +162,7 @@ class _DriveLoginPageState extends State<DriveLoginPage> {
           _DriveCard(
             title: '百度网盘',
             icon: Icons.cloud_rounded,
-            color: Colors.blue,
+            color: AppCoverPalette.colors[2], // 藏蓝
             connected: baiduService.authStatus == AuthStatus.authenticated,
             onLogout: () async {
               await baiduService.logout();
@@ -257,7 +258,7 @@ class _DriveLoginPageState extends State<DriveLoginPage> {
           _DriveCard(
             title: '夸克网盘',
             icon: Icons.cloud_done_rounded,
-            color: Colors.deepPurple,
+            color: AppCoverPalette.colors[4], // 绛紫
             connected: quarkService.authStatus == AuthStatus.authenticated,
             onLogout: () async {
               await quarkService.logout();
@@ -335,6 +336,7 @@ class _DriveCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -351,16 +353,25 @@ class _DriveCard extends StatelessWidget {
                 ),
                 const Spacer(),
                 if (connected) ...[
-                  const Icon(Icons.check_circle, color: Colors.green, size: 18),
+                  Icon(Icons.check_circle,
+                      // Material 的 Colors.green 在墨色体系里是唯一一处亮彩色，
+                      // 「已连接」这种状态用强调色表达即可。
+                      color: AppInk.accent(isDark),
+                      size: 18),
                   const SizedBox(width: 4),
-                  const Text('已连接', style: TextStyle(color: Colors.green)),
+                  Text(
+                    '已连接',
+                    style: AppType.caption
+                        .copyWith(color: AppInk.accent(isDark)),
+                  ),
                   const SizedBox(width: 8),
                   TextButton(onPressed: onLogout, child: const Text('断开')),
                 ] else
-                  Text('未连接',
-                      style: TextStyle(
-                          color:
-                              Theme.of(context).colorScheme.onSurfaceVariant)),
+                  Text(
+                    '未连接',
+                    style: AppType.caption
+                        .copyWith(color: AppInk.tertiary(isDark)),
+                  ),
               ],
             ),
             const SizedBox(height: 12),
