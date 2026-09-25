@@ -291,19 +291,26 @@ class _Rail extends StatelessWidget {
             ),
           ),
         ),
-        SizedBox(
-          height: 158,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.fromLTRB(
-                AppSpacing.lg, AppSpacing.md, AppSpacing.lg, AppSpacing.md),
-            itemCount: books.length,
-            separatorBuilder: (_, __) => const SizedBox(width: AppSpacing.md),
-            itemBuilder: (context, i) => _RailItem(
-              book: books[i],
-              progress: progressOf(books[i].id),
-              isDark: isDark,
-            ),
+        // 高度交给内容决定：写死 158 时，600dpi + 系统字号放大下
+        // 「封面 109 + 两行文字 + 上下留白」实际需要 172，真机报
+        // BOTTOM OVERFLOWED BY 14 PIXELS。横向 SingleChildScrollView 的
+        // 交叉轴高度跟随子内容，字号再放大也不会溢出。
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.fromLTRB(
+              AppSpacing.lg, AppSpacing.md, AppSpacing.lg, AppSpacing.md),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (var i = 0; i < books.length; i++) ...[
+                if (i > 0) const SizedBox(width: AppSpacing.md),
+                _RailItem(
+                  book: books[i],
+                  progress: progressOf(books[i].id),
+                  isDark: isDark,
+                ),
+              ],
+            ],
           ),
         ),
       ],

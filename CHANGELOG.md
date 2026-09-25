@@ -22,6 +22,11 @@
 - 抽出 `retryCurrent()`（立刻重解析 + 重置退避计数 + 失败后重新挂上退避），
   播放键、播放页横幅、迷你条三处共用同一个实现，不再各写一份。
 
+### 修掉「新入库」横轨的 14px 溢出（真机发现）
+- `_Rail` 写死 `height: 158`，而「封面 109 + 两行文字 + 上下留白」实际需要 172：
+  600dpi + 系统字号放大时真机报 `BOTTOM OVERFLOWED BY 14 PIXELS`。
+- 改为横向 `SingleChildScrollView` + `Row`，高度随内容自适应 —— 字号再放大也不会溢出。
+
 ### 修掉 dispose 之后的事件泄漏
 - `dispose()` 取消了定时器、释放了播放器，但**没有逐个取消 just_audio 的流订阅**：
   dispose 之后到达的事件仍会回调监听器并调 `notifyListeners()`，抛
