@@ -32,13 +32,15 @@ adb logcat -c ; adb logcat -d -s flutter:V | Select-String -Pattern 'Player|Stor
 - ⚠️ 仍是 **debug 签名**的演示包：换正式签名会导致无法覆盖安装、卸载即丢数据，必须先有「数据导出/导入」能力才能动。
 
 ## 版本管理（重要）
-- 远端**只用 HTTPS**：`https://github.com/nxdwjsj/audiobook-app.git`。
-  本机 SSH 到 GitHub 不可用（`ssh.github.com:443` 被本机拒连），`git@github.com:` 形式的操作会报 `Connection closed`。
-- 仓库现在挂着**两个 remote**：能用的 `https`，和不能用的 SSH `origin`。
-  当前分支 `refactor/android-polish` 跟踪 `https/...`（正常）；但 `main` 跟踪的是 `origin/main`（SSH，会失败）。
-  **推 `main` 之前先统一 remote**（把 `origin` 改成 HTTPS URL，或删掉多余的 `https`）。
+- 远端 `origin` = `git@github.com:nxdwjsj/audiobook-app.git`（**SSH**，已实测可推）。
+  `~/.ssh/config` 把 `github.com` 走 `ssh.github.com:443`；本地公钥已注册在账号上（`ssh -T git@github.com` 应回 `Hi nxdwjsj!`）。
+- HTTPS 也配置过（`https://github.com/nxdwjsj/audiobook-app.git`），但本机到 `github.com:443` 会**间歇性被阻断**
+  （`api.github.com` 通、`github.com` 超时）。两条路都会抽风，卡住就换另一条，别浪费时间：
+  先 `ssh -T git@github.com` 和 `Invoke-WebRequest https://github.com` 各探一次，再决定用哪个。
+- SSH 曾经解析到 `127.0.0.1`（DNS 污染）导致 `Connection closed`；现在解析到真实 IP。若又出现该报错，先查 `Resolve-DnsName ssh.github.com`。
 - 提交信息用中文「动词 + 对象」，例如：新增历史会话记录、修复夸克直链 412。
-- `releases/` 下有 16 个历史 APK（每个约 21MB，占仓库约 95MB）。**清理需要重写历史**，未经用户明确同意不要做。
+- `releases/` 下的历史 APK 已从 git 历史中清除（仓库从 337MB 瘦到约 1MB），目录本身被 `.gitignore` 忽略、只留本地归档。
+  **发布走 GitHub Releases**；不要再把 APK 提交进仓库。
 
 ## 硬禁忌（来自 README §7 的踩坑表，最危险的几条）
 - **禁止**把完整登录 Cookie / 请求 headers 打进日志；只打「方法 + URL → 状态码」。
