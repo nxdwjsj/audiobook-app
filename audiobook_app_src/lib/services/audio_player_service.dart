@@ -734,18 +734,10 @@ class AudioPlayerService extends ChangeNotifier {
   }
 
   Future<void> playPause() async {
-    // 处于加载失败状态时，播放键即「手动重试」：
-    // 否则用户点它没有任何反应（播放器还在 idle），只能干等自动重试
+    // 处于加载失败状态时，播放键即「手动重试」：否则用户点它没有任何反应
+    // （播放器还在 idle），只能干等自动重试。
     if (lastError != null && !_player.playing) {
-      _advanceRetryTimer?.cancel();
-      _advanceRetries = 0;
-      _resolvedCache.clear();
-      _preloadedForFileId = null;
-      await _loadCurrentChapter();
-      if (lastError == null) {
-        await _resumeAfterLoad();
-      }
-      notifyListeners();
+      await retryCurrent();
       return;
     }
     if (_player.playing) {
@@ -955,6 +947,31 @@ class AudioPlayerService extends ChangeNotifier {
       notifyListeners();
     });
     notifyListeners();
+  }
+
+  /// 用户手动重试当前章节（播放页错误横幅 / 迷你播放栏「重试」入口）。
+  ///
+  /// 与 [_scheduleAdvanceRetry] 的区别：**立刻执行**、重置退避计数、
+  /// 不等退避周期；同样先丢弃可能已过期的直链缓存再重新解析。
+  /// 若本次仍然失败，交回后台退避重试——不把用户留在「点了没反应」的死状态。
+  Future<void> retryCurrent() async {
+    if (_currentBook == null) return;
+    _advanceRetryTimer?.cancel();
+    _advanceRetries = 0;
+    retrying = true;
+    notifyListeners();
+
+    _resolvedCache.clear();
+    _onlineAudioCache.clear();
+    _preloadedForFileId = null;
+    await _loadCurrentChapter();
+    if (lastError == null) {
+      await _resumeAfterLoad();
+      retrying = false;
+      notifyListeners();
+      return;
+    }
+    _scheduleAdvanceRetry();
   }
 
   /// 直链 URL 的剩余有效秒数（解析查询参数里的 Expires / x-oss-expires）。

@@ -115,16 +115,40 @@ class _Bar extends StatelessWidget {
                                     ),
                                   ),
                                   const SizedBox(height: 2),
-                                  Text(
-                                    chapter != null
-                                        ? '${player.currentChapterIndex + 1}. ${chapter.title}'
-                                        : '第 ${player.currentChapterIndex + 1} 集',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: AppType.micro.copyWith(
-                                      color: AppInk.tertiary(isDark),
+                                  // 失败态：迷你栏是「不在播放页」时唯一能看到
+                                  // 播放状态的地方，后台连播失败必须在这里可见
+                                  // （规范 §5.7 失败态：图标与文案走警示色）。
+                                  if (player.lastError != null)
+                                    Row(
+                                      children: [
+                                        Icon(Icons.error_outline_rounded,
+                                            size: 14,
+                                            color: AppInk.warning(isDark)),
+                                        const SizedBox(width: 4),
+                                        Expanded(
+                                          child: Text(
+                                            player.lastError!,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: AppType.micro.copyWith(
+                                              color: AppInk.warning(isDark),
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    )
+                                  else
+                                    Text(
+                                      chapter != null
+                                          ? '${player.currentChapterIndex + 1}. ${chapter.title}'
+                                          : '第 ${player.currentChapterIndex + 1} 集',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: AppType.micro.copyWith(
+                                        color: AppInk.tertiary(isDark),
+                                      ),
                                     ),
-                                  ),
                                 ],
                               ),
                             ),
@@ -135,15 +159,40 @@ class _Bar extends StatelessWidget {
                   ),
                   // ---- 播放/暂停：墨色实心圆 ----
                   _RoundToggle(player: player),
-                  IconButton(
-                    icon: Icon(
-                      Icons.skip_next_rounded,
-                      size: 24,
-                      color: AppInk.secondary(isDark),
+                  // 失败时「下一章」没有意义 → 换成「重试」；
+                  // 正在重试则显示转圈，避免连点。
+                  if (player.lastError != null && !player.retrying)
+                    IconButton(
+                      icon: Icon(
+                        Icons.refresh_rounded,
+                        size: 24,
+                        color: AppInk.warning(isDark),
+                      ),
+                      tooltip: '重试',
+                      onPressed: player.retryCurrent,
+                    )
+                  else if (player.retrying)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: AppInk.warning(isDark),
+                        ),
+                      ),
+                    )
+                  else
+                    IconButton(
+                      icon: Icon(
+                        Icons.skip_next_rounded,
+                        size: 24,
+                        color: AppInk.secondary(isDark),
+                      ),
+                      tooltip: '下一章',
+                      onPressed: player.nextChapter,
                     ),
-                    tooltip: '下一章',
-                    onPressed: player.nextChapter,
-                  ),
                 ],
               ),
             ),

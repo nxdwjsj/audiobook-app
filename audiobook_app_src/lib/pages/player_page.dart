@@ -237,6 +237,28 @@ class PlayerPage extends StatelessWidget {
                                   ),
                                 ),
                               ],
+                              // 其它失败（网络抖动 / 直链失效 / 格式不支持）也给
+                              // 一个立刻重试的出口：此前只能干等后台退避，
+                              // 最长要约 3.5 分钟才有反应。
+                              if (!player.cloudAuthExpired) ...[
+                                const SizedBox(height: 8),
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: TextButton.icon(
+                                    onPressed: player.retrying
+                                        ? null
+                                        : player.retryCurrent,
+                                    icon: const Icon(Icons.refresh_rounded,
+                                        size: 18),
+                                    label: const Text('重试'),
+                                    style: TextButton.styleFrom(
+                                      foregroundColor: Theme.of(context)
+                                          .colorScheme
+                                          .onErrorContainer,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
                         ),
