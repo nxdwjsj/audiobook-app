@@ -10,7 +10,7 @@
 一个 Flutter 有声书播放器（主用 Android 真机），核心能力是**直接播放网盘里的音频文件夹**，把网盘文件夹当作一本书来管理（目录、进度、续播、历史）。
 
 - 应用名：`audiobook_app`，显示名「聆云」
-- 版本：`1.5.0+32`（与 `pubspec.yaml` 一致）
+- 版本：`1.6.0+33`（与 `pubspec.yaml` 一致）
 - 平台目录：仅 `android/`（iOS 与 Web 平台目录已在 1.1.0 移除，不再维护）
 - **视觉与交互规范**：改版前必读 [`docs/DESIGN-SYSTEM.md`](docs/DESIGN-SYSTEM.md)（基调：杂志感 · 封面为王）
 - **下载安装**：[Releases · 最新版](https://github.com/nxdwjsj/audiobook-app/releases/latest) → 下载对应的 APK 安装（release 构建、debug 签名、**仅 arm64**）
@@ -230,6 +230,16 @@ box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `li
 - **主色墨色化**（v1.4.0）：`seedColor` 紫 `#5B4FE9` → 墨 `#3A3A3A`，按钮与选中态靠明度区分，
   彩色只留给强调色（进度）。注意 `ColorScheme.fromSeed` **不能直接吃中性 seed**
   （会派生出青色 primary），显式槽位见 `app_theme.dart`
+- **顶部栏目导航**（v1.3.0，规范 §5.5）：刊头 `聆云` + 右侧 **搜索 / 网盘** 两个入口
+  （网盘原只存在于书架 ⋮ 菜单，其余三个栏目够不着）；栏目行「在听 / 书架 / 历史 / 统计」
+  等宽四格，选中 = 主墨色 w500 + 16×2px 强调色下划线。
+  **切换支持左右滑动**（v1.6.0）：内容区为 `PageView`，点栏目与滑动共用同一个
+  `PageController`；四个栏目包 `KeepAlivePage`，滑走再回来不会重建（不丢已加载的书与滚动位置）
+- **封面自动发现 + 生成封面缓存**（v1.6.0，规范 §4.4）：进书架时依次为本轮缺封面的书
+  （上限 12 本 / 并发 2）在网盘目录里找 `cover.jpg / folder.jpg / 封面.png` 等图，
+  下载**落盘**到 `<docs>/covers` 并回写 `localCoverPath`；找不到就本地离屏渲染
+  生成封面 PNG（零网络）。全部作为 `localCoverPath` 由 `BookCover` 加载 ——
+  不存 URL，因为网盘封面直链带鉴权且会过期
 - **常驻迷你播放条**（替代原悬浮球）：固定在首页底部的 `bottomNavigationBar` 槽位，
   顶边 2px 章节进度线一眼可见；信息区（封面/书名/章节）点击进播放页，右侧播放/暂停 + 下一章；
   无在播的书时整条收起；只在首页层级显示（进入播放页/详情页等推送路由时随首页一起被覆盖，
@@ -285,7 +295,9 @@ box：`bookshelf` / `playback_progress` / `app_config` / `listen_sessions` / `li
    书架里若残留历史在线书（`driveType == null` 且非本地），会显示"未知来源"，点播放提示无法播放属预期，可长按移出书架。
 2. **调试脚本 lint**：`tool/debug_quark_ua.dart` 有 `avoid_print` 提示（调试用，可忽略）。
 3. **未被验证的能力**：iOS / Web 平台未测；百度网盘链路在真机上验证较少。
-4. 可选增强：书架分组/排序规则、搜索结果封面补齐、播放失败的错误提示 UI（`lastError` 已具备，可展示）。
+4. 可选增强：书架分组/排序规则、**播放失败的错误提示 UI**（`lastError` 已具备，可展示）。
+   （「搜索结果封面补齐」v1.6.0 已做：搜索页书架命中直接显示封面。）
+5. **书签不做了**（用户已拍板）：听书靠续播按章节+位置恢复，书签不是必需功能。
 
 ---
 

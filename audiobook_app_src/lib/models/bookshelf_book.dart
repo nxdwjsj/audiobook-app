@@ -150,6 +150,31 @@ class BookshelfBook {
     );
   }
 
+  /// 复制一份并替换本地封面路径（自动封面发现 / 生成封面落盘用）。
+  ///
+  /// 刻意不带章节（等价于 `withChapters(null)`）：改封面不该顺手把上千条
+  /// 章节重写一遍，见 `BookshelfRepository._writeBook` 的写路径说明。
+  BookshelfBook withCoverPath(String? path) {
+    return BookshelfBook(
+      id: id,
+      title: title,
+      author: author,
+      coverUrl: coverUrl,
+      description: description,
+      chapterCount: chapterCount,
+      isLocal: isLocal,
+      localFilePath: localFilePath,
+      addedAt: addedAt,
+      driveType: driveType,
+      drivePath: drivePath,
+      driveDirFid: driveDirFid,
+      isFromShare: isFromShare,
+      shareUrl: shareUrl,
+      sortOrder: sortOrder,
+      localCoverPath: path,
+    );
+  }
+
   factory BookshelfBook.fromJson(Map<String, dynamic> json) {
     final driveTypeStr = json['driveType']?.toString();
     DriveType? driveType;

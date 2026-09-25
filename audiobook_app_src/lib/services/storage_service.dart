@@ -154,23 +154,23 @@ class StorageService {
   int getShelfColumns() =>
       (config.get('shelf_columns') as num?)?.toInt() ?? 3;
 
-  // --- 悬浮播放球位置 ---
+  // --- 封面自动探测结果（见 services/cover_auto_finder.dart）---
 
-  /// 浮球球心 X（占屏宽比例 0~1，兼容旋转/分辨率变化）。
-  Future<void> saveBallDxRatio(double ratio) async {
-    await config.put('ball_dx_ratio', ratio);
+  /// 记下「这本书已经找过封面」。
+  ///
+  /// 探测会走网盘 API，失败了也不该每次进书架都重试一遍。成功的书不需要
+  /// 记 —— 它已经有 `localCoverPath`，那本身就是「找过了」的证据。
+  Future<void> markCoverProbed(String bookId) async {
+    await config.put('cover_probed_$bookId', true);
   }
 
-  double getBallDxRatio() =>
-      (config.get('ball_dx_ratio') as num?)?.toDouble() ?? double.nan;
+  bool isCoverProbed(String bookId) =>
+      config.get('cover_probed_$bookId') as bool? ?? false;
 
-  /// 浮球球心 Y（占屏高比例 0~1）。
-  Future<void> saveBallDyRatio(double ratio) async {
-    await config.put('ball_dy_ratio', ratio);
+  /// 清除探测记录（重新联网找封面时用：比如换了网盘账号）。
+  Future<void> clearCoverProbe(String bookId) async {
+    await config.delete('cover_probed_$bookId');
   }
-
-  double getBallDyRatio() =>
-      (config.get('ball_dy_ratio') as num?)?.toDouble() ?? 0.62;
 
   /// 是否开启了「减弱动效」（低端机降级）。
   Future<void> saveReduceMotion(bool value) async {

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import '../widgets/app_page_route.dart';
@@ -10,15 +12,18 @@ import '../repositories/bookshelf_repository.dart';
 import '../repositories/book_source_repository.dart';
 import '../repositories/progress_repository.dart';
 import '../services/audio_player_service.dart';
+import '../services/baidu_drive_service.dart';
 import '../services/book_source/online_book_hit.dart';
+import '../services/cloud_drive_service.dart';
+import '../services/cover_auto_finder.dart';
 import '../services/local_import_service.dart';
+import '../services/quark_drive_service.dart';
 import '../services/storage_service.dart';
 import '../theme/app_tokens.dart';
 import '../widgets/book_cover.dart';
 import '../widgets/frosted_glass.dart';
 import '../widgets/throttled_navigator.dart';
 import 'drive_browser_page.dart';
-import 'resource_search_page.dart';
 import 'shelf_book_detail_page.dart';
 
 class BookshelfPage extends StatefulWidget {
@@ -34,10 +39,46 @@ class _BookshelfPageState extends State<BookshelfPage> {
   /// 书架布局：0 = 列表视图，其余为每行列数
   int _columns = 3;
 
+  /// 本轮已处理过的书 id（封面自动发现用，页面生命周期内去重）。
+  final Set<String> _coverTried = <String>{};
+
+  /// 上次触发封面扫描时的书架快照签名：id 列表变了才重新扫。
+  String? _coverScanSignature;
+
   @override
   void initState() {
     super.initState();
     _columns = context.read<StorageService>().getShelfColumns();
+  }
+
+  /// 书架的书变了（加书 / 删书）才排一次封面扫描，并推迟到本帧之后。
+  void _maybeScanCovers(List<BookshelfBook> books) {
+    final signature = books.map((b) => b.id).join('|');
+    if (signature == _coverScanSignature) return;
+    _coverScanSignature = signature;
+    final snapshot = List<BookshelfBook>.of(books);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_ensureCovers(snapshot));
+    });
+  }
+
+  /// 为缺封面的书补封面：优先网盘目录里的 cover.jpg，失败则本地渲染并缓存。
+  ///
+  /// 网盘服务在这里先捞出来再 await —— 跨了 await 之后 context 已不可用。
+  Future<void> _ensureCovers(List<BookshelfBook> books) async {
+    final storage = context.read<StorageService>();
+    final repository = context.read<BookshelfRepository>();
+    final quark = context.read<QuarkDriveService>();
+    final baidu = context.read<BaiduDriveService>();
+    await CoverAutoFinder(
+      storage: storage,
+      repository: repository,
+      // 两个服务实现的公共父类是 ChangeNotifier，必须显式提到接口类型上
+      driveOf: (type) => type == DriveType.baidu
+          ? baidu as CloudDriveService
+          : quark as CloudDriveService,
+    ).run(books, alreadyTried: _coverTried);
   }
 
   /// 切换书架布局（记住选择）。
@@ -77,6 +118,9 @@ class _BookshelfPageState extends State<BookshelfPage> {
   Widget build(BuildContext context) {
     final bookshelfRepo = context.watch<BookshelfRepository>();
     final books = bookshelfRepo.getAll();
+    // 封面补全：书架内容变化才排队一次，且排在首帧之后 ——
+    // build 里不能 await，也不该在列表正在布局时抢 CPU。
+    _maybeScanCovers(books);
 
     return Scaffold(
       // 透明背景：露出 HomePage 的渐变，让主界面更通透。
@@ -106,31 +150,45 @@ class _BookshelfPageState extends State<BookshelfPage> {
 
   /// 页内动作行：排序模式的「完成」/ 常规的「更多」菜单，右对齐。
   /// 原在 AppBar.actions 里，AppBar 移除后收进页内。
+  ///
+  /// **高度压到 32px**：原来这一行是默认 IconButton 高度（48px 触控盒），
+  /// 单独占掉一整行却没有承载多少信息 —— 网盘入口移到刊头（设计规范 §5.5）
+  /// 之后，这里只剩下「更多」，没必要再给它一行的呼吸空间。
   Widget _shelfActionRow(BuildContext context, int bookCount) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 2, 8, 0),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          if (_reordering)
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: TextButton(
+    return SizedBox(
+      height: 32,
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_reordering)
+              TextButton(
+                style: TextButton.styleFrom(
+                  minimumSize: const Size(0, 28),
+                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                ),
                 onPressed: () => setState(() => _reordering = false),
                 child: const Text('完成'),
+              )
+            else
+              IconButton(
+                icon: Icon(
+                  Icons.more_horiz_rounded,
+                  size: 20,
+                  color: AppInk.secondary(isDark),
+                ),
+                tooltip: '更多',
+                constraints: const BoxConstraints.tightFor(width: 36, height: 32),
+                padding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact,
+                onPressed: () => _showMoreMenu(context, bookCount),
               ),
-            )
-          else
-            IconButton(
-              icon: Icon(
-                Icons.more_horiz_rounded,
-                color: AppInk.secondary(isDark),
-              ),
-              tooltip: '更多',
-              onPressed: () => _showMoreMenu(context, bookCount),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -192,8 +250,8 @@ class _BookshelfPageState extends State<BookshelfPage> {
       builder: (ctx) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _menuTile('search', Icons.search_rounded, '搜索'),
-          _menuTile('drive', Icons.cloud_rounded, '打开网盘'),
+          // 「打开网盘」不再收录：已提到刊头（它在四个栏目页都要能一键到）。
+          // 「搜索」同理 —— 跨栏目动作属于刊头，不该在每个栏目里各复制一份。
           _menuTile('local', Icons.download_rounded, '导入本地音频'),
           _menuTile('layout', Icons.grid_view_rounded, '书架布局'),
           _menuTile('motion', Icons.animation_rounded, '减弱动效'),
@@ -234,21 +292,11 @@ class _BookshelfPageState extends State<BookshelfPage> {
       case 'layout':
         await _pickLayout();
         break;
-      case 'search':
-        context.pushThrottled(
-          AppPageRoute(builder: (_) => const ResourceSearchPage()),
-        );
-        break;
       case 'sort':
         setState(() => _reordering = true);
         break;
-      case 'drive':
-        context.pushThrottled(AppPageRoute(
-          builder: (_) => const DriveBrowserPage(
-            initialDrive: DriveType.quark,
-          ),
-        ));
-        break;
+      // 'search' 与 'drive' 两个分支随菜单项一并删除 —— 入口已上移到刊头，
+      // 留着只会让「从哪进都一样」变成「从哪进都有两份」。
       case 'local':
         await _importLocalFile(context);
         break;
